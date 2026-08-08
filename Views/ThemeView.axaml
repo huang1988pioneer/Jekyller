@@ -1,0 +1,204 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             xmlns:models="using:Jekyller.Models"
+             x:Class="Jekyller.Views.ThemeView"
+             x:DataType="vm:ThemeViewModel">
+  <Grid ColumnDefinitions="240,*" RowDefinitions="Auto,*" Margin="8">
+    <StackPanel Grid.ColumnSpan="2" Spacing="4" Margin="0,0,0,10">
+      <TextBlock Text="主題 Themes · Chirpy 設定" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="{Binding CurrentTheme}" Opacity="0.9" />
+      <TextBlock Text="{Binding StatusMessage}" Opacity="0.75" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <!-- Theme catalog -->
+    <Border Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Padding="10" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,8">
+          <TextBlock Text="主題目錄" FontWeight="SemiBold" />
+          <Button Content="安裝所選主題" Command="{Binding InstallSelectedCommand}" Classes="accent" HorizontalAlignment="Stretch" />
+          <Button Content="重新整理" Command="{Binding RefreshCommand}" HorizontalAlignment="Stretch" />
+        </StackPanel>
+        <ListBox ItemsSource="{Binding Themes}" SelectedItem="{Binding SelectedTheme}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="models:ThemeInfo">
+              <StackPanel Spacing="2" Margin="4">
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Opacity="0.75" FontSize="11" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <!-- Tabs: Chirpy form + raw YAML + log -->
+    <TabControl Grid.Row="1" Grid.Column="1">
+      <TabItem Header="Chirpy 表單">
+        <ScrollViewer>
+          <StackPanel Spacing="12" Margin="4">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="儲存 Chirpy 設定" Command="{Binding SaveChirpyFormCommand}" Classes="accent" />
+              <Button Content="重新載入" Command="{Binding RefreshCommand}" />
+            </StackPanel>
+
+            <Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="基本站台" FontWeight="SemiBold" FontSize="15" />
+                <TextBlock Text="title" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyTitle}" />
+                <TextBlock Text="tagline" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyTagline}" />
+                <TextBlock Text="description" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyDescription}" AcceptsReturn="True" Height="56" TextWrapping="Wrap" />
+                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto">
+                  <StackPanel Margin="0,0,6,6">
+                    <TextBlock Text="url" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyUrl}" PlaceholderText="https://user.github.io" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="6,0,0,6">
+                    <TextBlock Text="baseurl" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyBaseUrl}" PlaceholderText="/repo 或留空" />
+                  </StackPanel>
+                  <StackPanel Grid.Row="1" Margin="0,0,6,6">
+                    <TextBlock Text="lang" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyLang}" PlaceholderText="zh-TW / en" />
+                  </StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="1" Margin="6,0,0,6">
+                    <TextBlock Text="timezone" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyTimezone}" PlaceholderText="Asia/Taipei" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="外觀 Appearance" FontWeight="SemiBold" FontSize="15" />
+                <TextBlock Text="theme_mode（空=跟隨系統）" Opacity="0.7" FontSize="11" />
+                <ComboBox ItemsSource="{Binding ThemeModeOptions}" SelectedItem="{Binding ChirpyThemeMode}" HorizontalAlignment="Left" MinWidth="160" />
+                <TextBlock Text="avatar" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyAvatar}" PlaceholderText="/assets/img/avatar.jpg" />
+                <TextBlock Text="cdn" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyCdn}" />
+                <TextBlock Text="social_preview_image" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpySocialPreviewImage}" />
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                  <CheckBox Content="toc（文章目錄）" IsChecked="{Binding ChirpyToc}" />
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="paginate" VerticalAlignment="Center" Opacity="0.7" />
+                    <NumericUpDown Value="{Binding ChirpyPaginate}" Minimum="1" Maximum="100" FormatString="0" Width="100" />
+                  </StackPanel>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="社群 Social" FontWeight="SemiBold" FontSize="15" />
+                <Grid ColumnDefinitions="*,*">
+                  <StackPanel Margin="0,0,6,0" Spacing="4">
+                    <TextBlock Text="github.username" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGithubUsername}" />
+                    <TextBlock Text="twitter.username" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyTwitterUsername}" />
+                    <TextBlock Text="social.name" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpySocialName}" />
+                    <TextBlock Text="social.email" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpySocialEmail}" />
+                    <TextBlock Text="social.fediverse_handle" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyFediverseHandle}" PlaceholderText="@user@domain" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="6,0,0,0" Spacing="4">
+                    <TextBlock Text="social.links（每行一個 URL）" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpySocialLinks}" AcceptsReturn="True" Height="160"
+                             TextWrapping="NoWrap" FontFamily="Consolas,Courier New,monospace" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="驗證與分析" FontWeight="SemiBold" FontSize="15" />
+                <Grid ColumnDefinitions="*,*">
+                  <StackPanel Margin="0,0,6,0" Spacing="4">
+                    <TextBlock Text="Google site verification" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGoogleVerification}" />
+                    <TextBlock Text="Bing verification" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyBingVerification}" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="6,0,0,0" Spacing="4">
+                    <TextBlock Text="Google Analytics ID" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGoogleAnalyticsId}" PlaceholderText="G-XXXXXXXX" />
+                    <TextBlock Text="GoatCounter ID" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGoatCounterId}" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="評論 Comments" FontWeight="SemiBold" FontSize="15" />
+                <TextBlock Text="provider" Opacity="0.7" FontSize="11" />
+                <ComboBox ItemsSource="{Binding CommentProviderOptions}" SelectedItem="{Binding ChirpyCommentsProvider}"
+                          HorizontalAlignment="Left" MinWidth="180" />
+                <TextBlock Text="Disqus shortname" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyDisqusShortname}" />
+                <Grid ColumnDefinitions="*,*">
+                  <StackPanel Margin="0,0,6,0" Spacing="4">
+                    <TextBlock Text="Utterances repo" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyUtterancesRepo}" PlaceholderText="user/repo" />
+                    <TextBlock Text="Utterances issue_term" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyUtterancesIssueTerm}" PlaceholderText="pathname" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="6,0,0,0" Spacing="4">
+                    <TextBlock Text="Giscus repo" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGiscusRepo}" />
+                    <TextBlock Text="Giscus repo_id" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGiscusRepoId}" />
+                    <TextBlock Text="Giscus category / category_id" Opacity="0.7" FontSize="11" />
+                    <TextBox Text="{Binding ChirpyGiscusCategory}" PlaceholderText="category" />
+                    <TextBox Text="{Binding ChirpyGiscusCategoryId}" PlaceholderText="category_id" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="PWA / 資產 / 編輯動作" FontWeight="SemiBold" FontSize="15" />
+                <CheckBox Content="pwa.enabled" IsChecked="{Binding ChirpyPwaEnabled}" />
+                <CheckBox Content="pwa.cache.enabled" IsChecked="{Binding ChirpyPwaCacheEnabled}" />
+                <CheckBox Content="assets.self_host.enabled" IsChecked="{Binding ChirpyAssetsSelfHostEnabled}" />
+                <CheckBox Content="actions.edit_post.enabled" IsChecked="{Binding ChirpyEditPostEnabled}" />
+                <TextBlock Text="edit_post.url（repo 編輯基底網址）" Opacity="0.7" FontSize="11" />
+                <TextBox Text="{Binding ChirpyEditPostUrl}" PlaceholderText="https://github.com/user/repo/edit/main" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="原始 YAML">
+        <DockPanel Margin="4">
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+            <Button Content="儲存原始 YAML" Command="{Binding SaveThemeConfigCommand}" Classes="accent" />
+            <TextBlock Text="{Binding ThemeConfigPath}" Opacity="0.7" VerticalAlignment="Center" FontSize="12" />
+          </StackPanel>
+          <TextBox Text="{Binding ThemeConfigYaml}" AcceptsReturn="True" TextWrapping="NoWrap"
+                   FontFamily="Consolas,Courier New,monospace"
+                   VerticalContentAlignment="Top" />
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="日誌">
+        <TextBox Text="{Binding Log}" IsReadOnly="True" AcceptsReturn="True" Margin="4"
+                 TextWrapping="Wrap" FontFamily="Consolas,Courier New,monospace"
+                 VerticalContentAlignment="Top" />
+      </TabItem>
+    </TabControl>
+  </Grid>
+</UserControl>

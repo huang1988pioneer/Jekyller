@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             x:Class="Jekyller.Views.GitHubView"
+             x:DataType="vm:GitHubViewModel">
+  <Grid RowDefinitions="Auto,*" Margin="8">
+    <StackPanel Spacing="12">
+      <TextBlock Text="GitHub Pages" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="上傳專案到 GitHub，啟用 Pages，並確認部署狀態。需要已安裝並登入 gh CLI（gh auth login）。"
+                 Opacity="0.75" TextWrapping="Wrap" />
+
+      <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Repository" FontWeight="SemiBold" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto">
+            <TextBlock Text="Remote" VerticalAlignment="Center" Margin="0,0,8,8" />
+            <TextBlock Grid.Column="1" Text="{Binding RemoteUrl}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.85" />
+
+            <TextBlock Grid.Row="1" Text="Repo 名稱" VerticalAlignment="Center" Margin="0,0,8,8" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding RepoName}" Margin="0,0,0,8" />
+
+            <TextBlock Grid.Row="2" Text="Commit" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CommitMessage}" />
+          </Grid>
+          <CheckBox Content="建立為 Private repository" IsChecked="{Binding IsPrivate}" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="初始化 Git" Command="{Binding InitGitCommand}" />
+            <Button Content="建立 Repo 並推送" Command="{Binding CreateAndPushCommand}" Classes="accent" />
+            <Button Content="提交並推送" Command="{Binding CommitPushCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="GitHub Pages 狀態" FontWeight="SemiBold" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+            <TextBlock Text="Branch" VerticalAlignment="Center" Margin="0,0,8,8" />
+            <TextBox Grid.Column="1" Text="{Binding PagesBranch}" Margin="0,0,0,8" PlaceholderText="main" />
+            <TextBlock Grid.Row="1" Text="Path" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PagesPath}" PlaceholderText="/ 或 /docs" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="啟用 GitHub Pages" Command="{Binding EnablePagesCommand}" Classes="accent" />
+            <Button Content="重新查詢狀態" Command="{Binding CheckPagesCommand}" />
+          </StackPanel>
+          <TextBlock Text="{Binding PagesStatusText}" TextWrapping="Wrap" />
+          <TextBox Text="{Binding PagesUrl}" IsReadOnly="True" PlaceholderText="Pages URL" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <Border Grid.Row="1" Margin="0,12,0,0" Padding="10" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="日誌" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <TextBox Text="{Binding Log}" IsReadOnly="True" AcceptsReturn="True"
+                 TextWrapping="Wrap" FontFamily="Consolas,Courier New,monospace"
+                 VerticalContentAlignment="Top" />
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>

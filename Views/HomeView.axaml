@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             x:Class="Jekyller.Views.HomeView"
+             x:DataType="vm:HomeViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" Margin="8">
+      <TextBlock Text="Jekyller" FontSize="28" FontWeight="Bold" />
+      <TextBlock Text="一鍵建立 Jekyll · Chirpy 表單設定 · Markdown 預覽 · jekyll serve · GitHub Pages"
+                 Opacity="0.75" TextWrapping="Wrap" />
+
+      <Border Classes="card" Padding="16" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <StackPanel Spacing="10">
+          <TextBlock Text="目前專案" FontWeight="SemiBold" FontSize="16" />
+          <TextBlock Text="{Binding ProjectPath}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding StatusSummary}" Opacity="0.8" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="開啟專案資料夾" Command="{Binding OpenProjectCommand}" Classes="accent" />
+            <Button Content="關閉專案" Command="{Binding CloseProjectCommand}" IsVisible="{Binding HasProject}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="功能導覽" FontWeight="SemiBold" FontSize="16" Margin="0,8,0,0" />
+      <UniformGrid Columns="2" Rows="4">
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="⚙️ 環境建立" FontWeight="SemiBold" />
+            <TextBlock Text="檢查 Ruby / Jekyll / Git，一鍵 gem install，jekyll new 建立站台" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="🎨 Chirpy 表單" FontWeight="SemiBold" />
+            <TextBlock Text="完整表單設定 title / avatar / social / comments / PWA 等" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="📄 Markdown 預覽" FontWeight="SemiBold" />
+            <TextBlock Text="編輯文章時即時預覽，略過 front matter；可開瀏覽器 HTML" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="👁 本機預覽" FontWeight="SemiBold" />
+            <TextBlock Text="一鍵 jekyll serve + livereload，瀏覽器即時看整站" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="📝 站台設定" FontWeight="SemiBold" />
+            <TextBlock Text="視覺化編輯 _config.yml 常用欄位，也可直接改 YAML" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="🚀 GitHub Pages" FontWeight="SemiBold" />
+            <TextBlock Text="建立 repo、推送、啟用 Pages，並查詢部署狀態" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="✅ 建議流程" FontWeight="SemiBold" />
+            <TextBlock Text="環境 → Chirpy → 寫文章 → serve 預覽 → 推 GitHub Pages" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+      </UniformGrid>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

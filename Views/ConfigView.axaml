@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             x:Class="Jekyller.Views.ConfigView"
+             x:DataType="vm:ConfigViewModel">
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="*,*" Margin="8">
+    <StackPanel Grid.ColumnSpan="2" Spacing="6" Margin="0,0,0,12">
+      <TextBlock Text="站台設定 (_config.yml)" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="{Binding StatusMessage}" Opacity="0.8" TextWrapping="Wrap" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button Content="重新載入" Command="{Binding LoadCommand}" />
+        <Button Content="儲存常用欄位" Command="{Binding SaveFieldsCommand}" Classes="accent" />
+        <Button Content="儲存原始 YAML" Command="{Binding SaveRawCommand}" />
+      </StackPanel>
+    </StackPanel>
+
+    <Border Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Padding="14" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <ScrollViewer>
+        <StackPanel Spacing="8">
+          <TextBlock Text="常用欄位" FontWeight="SemiBold" />
+          <TextBlock Text="title" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Title}" />
+          <TextBlock Text="description" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Description}" AcceptsReturn="True" Height="60" TextWrapping="Wrap" />
+          <TextBlock Text="url" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Url}" PlaceholderText="https://username.github.io" />
+          <TextBlock Text="baseurl" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding BaseUrl}" PlaceholderText="/repo-name 或留空" />
+          <TextBlock Text="email" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Email}" />
+          <TextBlock Text="theme" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Theme}" />
+          <TextBlock Text="remote_theme" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding RemoteTheme}" PlaceholderText="owner/repo" />
+          <TextBlock Text="lang" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Lang}" PlaceholderText="zh-TW" />
+          <TextBlock Text="timezone" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Timezone}" PlaceholderText="Asia/Taipei" />
+          <TextBlock Text="markdown" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Markdown}" />
+          <TextBlock Text="permalink" Opacity="0.7" FontSize="12" />
+          <TextBox Text="{Binding Permalink}" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Column="1" Padding="14" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="原始 YAML 編輯器" FontWeight="SemiBold" Margin="0,0,0,8" />
+        <TextBox Text="{Binding RawYaml}" AcceptsReturn="True" TextWrapping="NoWrap"
+                 FontFamily="Consolas,Courier New,monospace"
+                 VerticalContentAlignment="Top" />
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>

@@ -1,0 +1,106 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             xmlns:models="using:Jekyller.Models"
+             x:Class="Jekyller.Views.ContentView"
+             x:DataType="vm:ContentViewModel">
+  <Grid ColumnDefinitions="240,*,*" RowDefinitions="Auto,*" Margin="8">
+    <StackPanel Grid.ColumnSpan="3" Spacing="6" Margin="0,0,0,10">
+      <TextBlock Text="內容 Markdown" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="{Binding StatusMessage}" Opacity="0.8" />
+    </StackPanel>
+
+    <!-- File list -->
+    <Border Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Padding="10" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
+          <TextBlock Text="檔案列表" FontWeight="SemiBold" />
+          <Button Content="重新整理" Command="{Binding RefreshListCommand}" HorizontalAlignment="Stretch" />
+          <Expander Header="新增文章 (post)" IsExpanded="False">
+            <StackPanel Spacing="6" Margin="0,6,0,0">
+              <TextBox Text="{Binding NewPostTitle}" PlaceholderText="標題" />
+              <TextBox Text="{Binding NewPostCategories}" PlaceholderText="categories（逗號分隔）" />
+              <TextBox Text="{Binding NewPostTags}" PlaceholderText="tags（逗號分隔）" />
+              <Button Content="建立文章" Command="{Binding CreatePostCommand}" Classes="accent" />
+            </StackPanel>
+          </Expander>
+          <Expander Header="新增頁面 (page)" IsExpanded="False">
+            <StackPanel Spacing="6" Margin="0,6,0,0">
+              <TextBox Text="{Binding NewPageTitle}" PlaceholderText="標題" />
+              <TextBox Text="{Binding NewPageFileName}" PlaceholderText="about.md" />
+              <Button Content="建立頁面" Command="{Binding CreatePageCommand}" Classes="accent" />
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+        <ListBox ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="models:ContentFile">
+              <StackPanel Margin="2">
+                <TextBlock Text="{Binding RelativePath}" TextWrapping="Wrap" FontSize="12" />
+                <TextBlock Text="{Binding Kind}" Opacity="0.6" FontSize="10" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <!-- Editor -->
+    <Border Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" Padding="10" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+          <Button Content="儲存" Command="{Binding SaveCommand}" Classes="accent" />
+          <CheckBox Content="顯示預覽" IsChecked="{Binding ShowPreview}" VerticalAlignment="Center" />
+          <Button Content="瀏覽器 HTML" Command="{Binding OpenHtmlPreviewCommand}" />
+          <TextBlock Text="有未儲存變更" IsVisible="{Binding IsDirty}" Foreground="#E6A23C" VerticalAlignment="Center" />
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Top" Text="編輯器（含 front matter）" FontWeight="SemiBold" Margin="0,0,0,6" Opacity="0.8" />
+        <TextBox Text="{Binding EditorText}" AcceptsReturn="True" TextWrapping="Wrap"
+                 FontFamily="Consolas,Courier New,monospace"
+                 VerticalContentAlignment="Top" />
+      </DockPanel>
+    </Border>
+
+    <!-- Markdown preview -->
+    <Border Grid.Row="1" Grid.Column="2" Padding="10" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+            IsVisible="{Binding ShowPreview}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Markdown 預覽（已略過 front matter）"
+                   FontWeight="SemiBold" Margin="0,0,0,8" Opacity="0.8" />
+        <ScrollViewer>
+          <ItemsControl ItemsSource="{Binding PreviewBlocks}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="models:PreviewBlock">
+                <Border Margin="0,0,0,8">
+                  <Panel>
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="22" FontWeight="Bold"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=h1}" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="18" FontWeight="SemiBold"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=h2}" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="15" FontWeight="SemiBold"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=h3}" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13" Opacity="0.95"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=p}" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13" FontStyle="Italic" Opacity="0.8"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=quote}" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=li}" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12"
+                               FontFamily="Consolas,Courier New,monospace"
+                               Background="#2A2A2A" Padding="8"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=code}" />
+                    <TextBlock Text="────────" Opacity="0.4"
+                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=hr}" />
+                  </Panel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>

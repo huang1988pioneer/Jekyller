@@ -1,0 +1,62 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             x:Class="Jekyller.Views.SetupView"
+             x:DataType="vm:SetupViewModel">
+  <Grid RowDefinitions="Auto,*" Margin="8">
+    <StackPanel Spacing="12" Grid.Row="0">
+      <TextBlock Text="環境建立" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="檢查並安裝 Jekyll 所需工具，一鍵建立或開啟專案。" Opacity="0.75" />
+
+      <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <StackPanel Spacing="8">
+          <DockPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8" DockPanel.Dock="Right">
+              <Button Content="檢查環境" Command="{Binding CheckEnvironmentCommand}" Classes="accent" />
+              <Button Content="安裝 Jekyll + Bundler" Command="{Binding InstallJekyllCommand}" />
+            </StackPanel>
+            <TextBlock Text="本機工具" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </DockPanel>
+          <ItemsControl ItemsSource="{Binding Tools}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Display}" Margin="0,2" FontFamily="Consolas,Courier New,monospace" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="一鍵建立 Jekyll 站台" FontWeight="SemiBold" />
+          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" Margin="0,4">
+            <TextBlock Text="父資料夾" VerticalAlignment="Center" Margin="0,0,8,8" />
+            <TextBox Grid.Column="1" Text="{Binding ParentDirectory}" Margin="0,0,8,8" />
+            <Button Grid.Column="2" Content="瀏覽…" Command="{Binding BrowseParentCommand}" Margin="0,0,0,8" />
+
+            <TextBlock Grid.Row="1" Text="網站名稱" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SiteName}" Margin="0,0,8,0" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="建立站台 (jekyll new)" Command="{Binding CreateSiteCommand}" Classes="accent" />
+            <Button Content="開啟既有專案" Command="{Binding OpenExistingCommand}" />
+            <Button Content="bundle install" Command="{Binding BundleInstallCommand}" />
+            <Button Content="jekyll build" Command="{Binding BuildCommand}" />
+          </StackPanel>
+          <TextBlock Text="{Binding ProjectPathDisplay}" Opacity="0.8" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <Border Grid.Row="1" Margin="0,12,0,0" Padding="10" CornerRadius="10"
+            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="輸出日誌" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <TextBox Text="{Binding Log}" IsReadOnly="True" AcceptsReturn="True"
+                 TextWrapping="Wrap" FontFamily="Consolas,Courier New,monospace"
+                 VerticalContentAlignment="Top" />
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>
