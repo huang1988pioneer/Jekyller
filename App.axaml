@@ -17,5 +17,31 @@
         <Style Selector="TextBox">
             <Setter Property="MinHeight" Value="32" />
         </Style>
+        <Style Selector="TextBlock.sectionTitle">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBlock.caption">
+            <Setter Property="Opacity" Value="0.55" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+        </Style>
+        <Style Selector="Border.pill">
+            <Setter Property="Background" Value="#2A3142" />
+            <Setter Property="CornerRadius" Value="999" />
+        </Style>
+        <Style Selector="Border.deploymentMonitor">
+            <Setter Property="Background" Value="#1A2238" />
+            <Setter Property="BorderBrush" Value="#3D5AFE" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="TextBox.logBox">
+            <Setter Property="Background" Value="#0D1218" />
+            <Setter Property="Padding" Value="10" />
+        </Style>
     </Application.Styles>
 </Application>

@@ -3,67 +3,151 @@
              xmlns:vm="using:Jekyller.ViewModels"
              x:Class="Jekyller.Views.GitHubView"
              x:DataType="vm:GitHubViewModel">
-  <Grid RowDefinitions="Auto,*" Margin="8">
-    <StackPanel Spacing="12">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="12" Margin="8" MaxWidth="980">
       <TextBlock Text="GitHub Pages" FontSize="22" FontWeight="Bold" />
-      <TextBlock Text="上傳專案到 GitHub，啟用 Pages，並確認部署狀態。需要已安裝並登入 gh CLI（gh auth login）。"
+      <TextBlock Text="將網站推上 GitHub，以 GitHub Actions 部署 Pages，並查詢上線狀態。使用者網站（owner.github.io）發佈到 https://owner.github.io/；專案網站則為 https://owner.github.io/repo/。"
                  Opacity="0.75" TextWrapping="Wrap" />
 
-      <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+      <Border Classes="card">
         <StackPanel Spacing="8">
-          <TextBlock Text="Repository" FontWeight="SemiBold" />
-          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto">
-            <TextBlock Text="Remote" VerticalAlignment="Center" Margin="0,0,8,8" />
-            <TextBlock Grid.Column="1" Text="{Binding RemoteUrl}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.85" />
-
-            <TextBlock Grid.Row="1" Text="Repo 名稱" VerticalAlignment="Center" Margin="0,0,8,8" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding RepoName}" Margin="0,0,0,8" />
-
-            <TextBlock Grid.Row="2" Text="Commit" VerticalAlignment="Center" Margin="0,0,8,0" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CommitMessage}" />
-          </Grid>
-          <CheckBox Content="建立為 Private repository" IsChecked="{Binding IsPrivate}" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="初始化 Git" Command="{Binding InitGitCommand}" />
-            <Button Content="建立 Repo 並推送" Command="{Binding CreateAndPushCommand}" Classes="accent" />
-            <Button Content="Pull" Command="{Binding PullCommand}" />
-            <Button Content="提交並推送" Command="{Binding CommitPushCommand}" />
+          <TextBlock Text="本機工具" Classes="sectionTitle" />
+          <TextBlock Text="{Binding GitStatus}" />
+          <TextBlock Text="{Binding GhStatus}" />
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+            <Button Content="重新整理狀態" Command="{Binding RefreshCommand}" IsEnabled="{Binding !IsBusy}" />
+            <Button Content="GitHub 登入 (gh auth)" Command="{Binding LoginCommand}" IsEnabled="{Binding !IsBusy}" />
+            <Button Content="只加入 workflow 檔" Command="{Binding AddWorkflowOnlyCommand}" />
           </StackPanel>
         </StackPanel>
       </Border>
 
-      <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-        <StackPanel Spacing="8">
-          <TextBlock Text="GitHub Pages 發佈" FontWeight="SemiBold" />
-          <TextBlock Text="建議使用 GitHub Actions，使本機與 CI 都透過 Bundler 建置 Jekyll。設定後，按「提交並推送」即可觸發部署。"
-                     Opacity="0.75" TextWrapping="Wrap" />
-          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
-            <TextBlock Text="Branch" VerticalAlignment="Center" Margin="0,0,8,8" />
-            <TextBox Grid.Column="1" Text="{Binding PagesBranch}" Margin="0,0,0,8" PlaceholderText="main" />
-            <TextBlock Grid.Row="1" Text="Path" VerticalAlignment="Center" Margin="0,0,8,0" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PagesPath}" PlaceholderText="/ 或 /docs" />
+      <Border Classes="card" BorderBrush="#3D5AFE" BorderThickness="1">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="3">
+              <TextBlock Text="連結既有 GitHub Repository" Classes="sectionTitle" />
+              <TextBlock Text="貼上 repository 網址，Jekyller 會辨識 Pages 類型、同步 url / baseurl，安全合併遠端內容後部署。"
+                         Classes="caption" TextWrapping="Wrap" />
+            </StackPanel>
+            <Border Grid.Column="1" Classes="pill" Padding="10,4" VerticalAlignment="Top">
+              <TextBlock Text="推薦" Foreground="#C5D0FF" FontWeight="SemiBold" FontSize="12" />
+            </Border>
+          </Grid>
+
+          <TextBox Text="{Binding RepositoryUrl}"
+                   PlaceholderText="https://github.com/owner/owner.github.io"
+                   FontFamily="Consolas, Cascadia Mono, monospace" />
+
+          <Border Background="#101720" BorderBrush="#2A3648" BorderThickness="1"
+                  CornerRadius="8" Padding="12">
+            <TextBlock Text="{Binding RepositoryTargetSummary}" TextWrapping="Wrap"
+                       Opacity="0.85" LineHeight="20" />
+          </Border>
+
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="3" VerticalAlignment="Center">
+              <CheckBox Content="將 _config.yml 的 url / baseurl 同步為建議 Pages 網址"
+                        IsChecked="{Binding SyncRecommendedSiteUrls}" />
+              <TextBlock Text="若遠端已有 README，會先安全取得並保留；遇到衝突立即停止，不會 force push。"
+                         Classes="caption" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="連結、推送並啟用 Pages"
+                    Classes="accent" Command="{Binding ConnectExistingRepositoryCommand}"
+                    IsEnabled="{Binding CanConnectNow}" Margin="16,0,0,0"
+                    VerticalAlignment="Center" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Grid ColumnDefinitions="*,*">
+        <Border Classes="card" Margin="0,0,6,0">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Repository 連線" Classes="sectionTitle" />
+            <TextBlock Text="{Binding RemoteSummary}" Opacity="0.85" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="1" Margin="6,0,0,0">
+          <StackPanel Spacing="8">
+            <TextBlock Text="GitHub Pages 狀態" Classes="sectionTitle" />
+            <TextBlock Text="{Binding PagesSummary}" Opacity="0.85" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="查詢 Pages 狀態" Command="{Binding RefreshPagesStatusCommand}"
+                      IsEnabled="{Binding !IsBusy}" />
+              <Button Content="開啟網站" Command="{Binding OpenPagesUrlCommand}"
+                      IsEnabled="{Binding HasPagesUrl}" />
+              <Button Content="啟用 Pages (Actions)" Command="{Binding EnablePagesCommand}"
+                      IsEnabled="{Binding !IsBusy}" />
+            </StackPanel>
+            <TextBlock Text="最近一次 Actions 部署" FontWeight="SemiBold" Margin="0,4,0,0" />
+            <TextBlock Text="{Binding DeploymentStatus}" Opacity="0.85" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Border Classes="card deploymentMonitor">
+        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+          <StackPanel Spacing="5" Margin="0,0,20,0">
+            <TextBlock Text="線上版本監控" Classes="sectionTitle" />
+            <TextBlock Text="{Binding DeploymentMonitorTitle}"
+                       FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding DeploymentMonitorSummary}"
+                       Opacity="0.85" TextWrapping="Wrap" LineHeight="20" />
+            <TextBlock Text="{Binding DeploymentMonitorSchedule}"
+                       Classes="caption" TextWrapping="Wrap" />
+          </StackPanel>
+          <Button Grid.Column="1"
+                  Content="立即檢查線上版本"
+                  Command="{Binding CheckDeploymentNowCommand}"
+                  IsEnabled="{Binding !IsCheckingDeployment}"
+                  VerticalAlignment="Center" />
+          <ProgressBar Grid.Row="1" Grid.ColumnSpan="2"
+                       Margin="0,12,0,0" Height="3"
+                       IsIndeterminate="True"
+                       IsVisible="{Binding IsCheckingDeployment}" />
+        </Grid>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="建立新的 GitHub Repository" Classes="sectionTitle" />
+          <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto">
+            <TextBlock Text="Repo 名稱" VerticalAlignment="Center" Margin="0,0,0,8" />
+            <TextBox Grid.Column="1" Text="{Binding RepoName}"
+                     PlaceholderText="my-jekyll-site（只填新 repository 名稱）" Margin="0,0,0,8" />
+            <TextBlock Grid.Row="1" Text="可見性" VerticalAlignment="Center" Margin="0,0,0,8" />
+            <CheckBox Grid.Row="1" Grid.Column="1" Content="建立為 Private repository"
+                      IsChecked="{Binding IsPrivate}" Margin="0,0,0,8" />
+            <TextBlock Grid.Row="2" Text="Commit 訊息" VerticalAlignment="Center" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CommitMessage}" />
           </Grid>
           <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="設定 Actions 發佈" Command="{Binding ConfigureActionsPagesCommand}" Classes="accent" />
-            <Button Content="啟用 GitHub Pages" Command="{Binding EnablePagesCommand}" Classes="accent" />
-            <Button Content="重新查詢狀態" Command="{Binding CheckPagesCommand}" />
+            <Button Content="建立新 Repo + 推送 + 啟用 Pages" Classes="accent"
+                    Command="{Binding CreateAndDeployCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+            <Button Content="建置、提交並推送更新" Command="{Binding PushCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+            <Button Content="Pull" Command="{Binding PullCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
           </StackPanel>
-          <TextBlock Text="{Binding PagesStatusText}" TextWrapping="Wrap" />
-          <TextBox Text="{Binding PagesUrl}" IsReadOnly="True" PlaceholderText="Pages URL" />
-          <TextBlock Text="最近一次 Actions 部署" FontWeight="SemiBold" Margin="0,8,0,0" />
-          <TextBlock Text="{Binding DeploymentStatus}" TextWrapping="Wrap" Opacity="0.85" />
+          <TextBlock Classes="caption" TextWrapping="Wrap"
+                     Text="流程：本機 Jekyll production build → 寫入 .github/workflows/jekyll.yml（若尚無 Pages workflow）→ git commit/push → GitHub Actions 以 Bundler 建置並部署。建置失敗時不會推送；請先 gh auth login。Chirpy starter 若已有 pages-deploy.yml 則不會重複建立。" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="操作日誌" Classes="sectionTitle" />
+          <TextBox Text="{Binding Log}"
+                   IsReadOnly="True"
+                   AcceptsReturn="True"
+                   Classes="logBox"
+                   MinHeight="160"
+                   TextWrapping="Wrap"
+                   FontFamily="Consolas, Courier New, monospace" />
+          <TextBlock Text="{Binding StatusMessage}" Opacity="0.75" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
     </StackPanel>
-
-    <Border Grid.Row="1" Margin="0,12,0,0" Padding="10" CornerRadius="10"
-            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-      <DockPanel>
-        <TextBlock DockPanel.Dock="Top" Text="日誌" FontWeight="SemiBold" Margin="0,0,0,6" />
-        <TextBox Text="{Binding Log}" IsReadOnly="True" AcceptsReturn="True"
-                 TextWrapping="Wrap" FontFamily="Consolas,Courier New,monospace"
-                 VerticalContentAlignment="Top" />
-      </DockPanel>
-    </Border>
-  </Grid>
+  </ScrollViewer>
 </UserControl>

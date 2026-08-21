@@ -22,7 +22,8 @@ public interface IJekyllService
     Task<ProcessResult> BuildAsync(
         string projectPath,
         IProgress<string>? output = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool production = false);
 
     bool LooksLikeJekyllSite(string path);
 }
@@ -84,8 +85,21 @@ public sealed class JekyllService(IProcessRunner processRunner) : IJekyllService
     public Task<ProcessResult> BuildAsync(
         string projectPath,
         IProgress<string>? output = null,
-        CancellationToken cancellationToken = default)
-        => processRunner.RunAsync("bundle", "exec jekyll build", projectPath, output, cancellationToken);
+        CancellationToken cancellationToken = default,
+        bool production = false)
+    {
+        IReadOnlyDictionary<string, string?>? env = production
+            ? new Dictionary<string, string?> { ["JEKYLL_ENV"] = "production" }
+            : null;
+
+        return processRunner.RunAsync(
+            "bundle",
+            "exec jekyll build",
+            projectPath,
+            output,
+            cancellationToken,
+            env);
+    }
 
     public bool LooksLikeJekyllSite(string path)
     {

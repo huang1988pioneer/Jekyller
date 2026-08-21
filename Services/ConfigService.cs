@@ -26,6 +26,7 @@ public interface IConfigService
     Task<JekyllConfigSnapshot> LoadAsync(string projectPath, CancellationToken cancellationToken = default);
     Task SaveRawAsync(string projectPath, string rawYaml, CancellationToken cancellationToken = default);
     Task SaveFieldsAsync(string projectPath, JekyllConfigSnapshot fields, CancellationToken cancellationToken = default);
+    Task UpdateUrlAndBaseUrlAsync(string projectPath, string url, string baseUrl, CancellationToken cancellationToken = default);
     Task<string?> LoadThemeConfigAsync(string projectPath, CancellationToken cancellationToken = default);
     Task SaveThemeConfigAsync(string projectPath, string rawYaml, CancellationToken cancellationToken = default);
     string? FindThemeConfigPath(string projectPath);
@@ -104,6 +105,30 @@ public sealed class ConfigService : IConfigService
 
         await File.WriteAllTextAsync(path, NormalizeNewlines(raw), new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task UpdateUrlAndBaseUrlAsync(
+        string projectPath,
+        string url,
+        string baseUrl,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await LoadAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        await SaveFieldsAsync(projectPath, new JekyllConfigSnapshot
+        {
+            RawYaml = current.RawYaml,
+            Title = current.Title,
+            Description = current.Description,
+            Url = url,
+            BaseUrl = baseUrl,
+            Email = current.Email,
+            Theme = current.Theme,
+            RemoteTheme = current.RemoteTheme,
+            Lang = current.Lang,
+            Timezone = current.Timezone,
+            Markdown = current.Markdown,
+            Permalink = current.Permalink
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string?> LoadThemeConfigAsync(string projectPath, CancellationToken cancellationToken = default)

@@ -29,7 +29,9 @@ public interface IProcessRunner
         string arguments,
         string? workingDirectory = null,
         IProgress<string>? output = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string?>? environment = null,
+        int? timeoutMs = null);
 
     Task<ProcessResult> RunShellAsync(
         string command,
@@ -57,7 +59,9 @@ public sealed class ProcessRunner : IProcessRunner
         string arguments,
         string? workingDirectory = null,
         IProgress<string>? output = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string?>? environment = null,
+        int? timeoutMs = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -71,6 +75,17 @@ public sealed class ProcessRunner : IProcessRunner
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+
+        if (environment is not null)
+        {
+            foreach (var pair in environment)
+            {
+                if (pair.Value is null)
+                    psi.Environment.Remove(pair.Key);
+                else
+                    psi.Environment[pair.Key] = pair.Value;
+            }
+        }
 
         // Ensure common tool paths are visible on Windows.
         if (OperatingSystem.IsWindows())
@@ -136,9 +151,16 @@ public sealed class ProcessRunner : IProcessRunner
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
+        using var timeoutCts = timeoutMs is int ms
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
+        if (timeoutCts is not null && timeoutMs is int msValue)
+            timeoutCts.CancelAfter(msValue);
+
+        var token = timeoutCts?.Token ?? cancellationToken;
         try
         {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await process.WaitForExitAsync(token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -152,7 +174,14 @@ public sealed class ProcessRunner : IProcessRunner
                 // ignored
             }
 
-            throw;
+            if (cancellationToken.IsCancellationRequested)
+                throw;
+
+            return new ProcessResult
+            {
+                ExitCode = -1,
+                StdErr = $"程序逾時：{fileName} {arguments}"
+            };
         }
 
         return new ProcessResult

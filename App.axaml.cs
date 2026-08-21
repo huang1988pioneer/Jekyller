@@ -29,7 +29,8 @@ public partial class App : Application
             var chirpy = new ChirpyConfigService(config);
             var themes = new ThemeService(process, config);
             var content = new ContentService();
-            var github = new GitHubService(process);
+            var deploymentMonitor = new DeploymentMonitorService();
+            var github = new GitHubService(process, config, deploymentMonitor);
             var markdown = new MarkdownPreviewService();
             _serve = new JekyllServeService();
 
@@ -39,7 +40,7 @@ public partial class App : Application
             var themeVm = new ThemeViewModel(themes, config, chirpy, project, dialogs);
             var contentVm = new ContentViewModel(content, project, dialogs, markdown);
             var previewVm = new PreviewViewModel(_serve, project, dialogs);
-            var githubVm = new GitHubViewModel(github, project, dialogs);
+            var githubVm = new GitHubViewModel(github, jekyll, project, dialogs, deploymentMonitor);
 
             var main = new MainViewModel(project, home, setup, configVm, themeVm, contentVm, previewVm, githubVm);
 
@@ -51,6 +52,8 @@ public partial class App : Application
             desktop.Exit += (_, _) =>
             {
                 try { _serve?.Dispose(); }
+                catch { /* ignore */ }
+                try { githubVm.Dispose(); }
                 catch { /* ignore */ }
             };
         }
