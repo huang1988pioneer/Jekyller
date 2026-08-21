@@ -35,6 +35,9 @@ public partial class GitHubViewModel : ViewModelBase
     public partial string PagesUrl { get; set; } = string.Empty;
 
     [ObservableProperty]
+    public partial string DeploymentStatus { get; set; } = "尚未查詢";
+
+    [ObservableProperty]
     public partial string Log { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -137,6 +140,48 @@ public partial class GitHubViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task PullAsync()
+    {
+        if (!EnsureProject()) return;
+        IsBusy = true;
+        try
+        {
+            AppendLog("從 origin 拉取最新變更…");
+            var result = await _github.PullAsync(_project.ProjectPath!, new Progress<string>(AppendLog))
+                .ConfigureAwait(true);
+            AppendLog(result.Success ? "Pull 完成。" : "Pull 失敗：\n" + result.CombinedOutput);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ConfigureActionsPagesAsync()
+    {
+        if (!EnsureProject()) return;
+        IsBusy = true;
+        try
+        {
+            AppendLog("建立 GitHub Actions Jekyll Pages 工作流程…");
+            var result = await _github.ConfigureActionsPagesAsync(
+                    _project.ProjectPath!,
+                    new Progress<string>(AppendLog))
+                .ConfigureAwait(true);
+            AppendLog(result.Success
+                ? "Actions 發佈設定完成；請按「提交並推送」觸發部署。"
+                : "Actions 發佈設定失敗：\n" + result.CombinedOutput);
+            if (result.Success)
+                await CheckPagesAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
     private async Task EnablePagesAsync()
     {
         if (!EnsureProject()) return;
@@ -186,6 +231,7 @@ public partial class GitHubViewModel : ViewModelBase
             }
 
             AppendLog(status.Message);
+            DeploymentStatus = await _github.GetLatestDeploymentAsync(_project.ProjectPath!).ConfigureAwait(true);
         }
         finally
         {

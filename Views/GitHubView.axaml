@@ -26,6 +26,7 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="初始化 Git" Command="{Binding InitGitCommand}" />
             <Button Content="建立 Repo 並推送" Command="{Binding CreateAndPushCommand}" Classes="accent" />
+            <Button Content="Pull" Command="{Binding PullCommand}" />
             <Button Content="提交並推送" Command="{Binding CommitPushCommand}" />
           </StackPanel>
         </StackPanel>
@@ -33,7 +34,9 @@
 
       <Border Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
         <StackPanel Spacing="8">
-          <TextBlock Text="GitHub Pages 狀態" FontWeight="SemiBold" />
+          <TextBlock Text="GitHub Pages 發佈" FontWeight="SemiBold" />
+          <TextBlock Text="建議使用 GitHub Actions，使本機與 CI 都透過 Bundler 建置 Jekyll。設定後，按「提交並推送」即可觸發部署。"
+                     Opacity="0.75" TextWrapping="Wrap" />
           <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
             <TextBlock Text="Branch" VerticalAlignment="Center" Margin="0,0,8,8" />
             <TextBox Grid.Column="1" Text="{Binding PagesBranch}" Margin="0,0,0,8" PlaceholderText="main" />
@@ -41,11 +44,14 @@
             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PagesPath}" PlaceholderText="/ 或 /docs" />
           </Grid>
           <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="設定 Actions 發佈" Command="{Binding ConfigureActionsPagesCommand}" Classes="accent" />
             <Button Content="啟用 GitHub Pages" Command="{Binding EnablePagesCommand}" Classes="accent" />
             <Button Content="重新查詢狀態" Command="{Binding CheckPagesCommand}" />
           </StackPanel>
           <TextBlock Text="{Binding PagesStatusText}" TextWrapping="Wrap" />
           <TextBox Text="{Binding PagesUrl}" IsReadOnly="True" PlaceholderText="Pages URL" />
+          <TextBlock Text="最近一次 Actions 部署" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding DeploymentStatus}" TextWrapping="Wrap" Opacity="0.85" />
         </StackPanel>
       </Border>
     </StackPanel>
