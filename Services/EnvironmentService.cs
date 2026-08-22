@@ -11,6 +11,8 @@ public interface IEnvironmentService
 
 public sealed class EnvironmentService(IProcessRunner processRunner) : IEnvironmentService
 {
+    private const string RubyWingetPackageId = "RubyInstallerTeam.RubyWithDevKit.3.4";
+
     public async Task<IReadOnlyList<ToolStatus>> CheckToolsAsync(CancellationToken cancellationToken = default)
     {
         var tools = new (string Name, string File, string Args)[]
@@ -41,11 +43,80 @@ public sealed class EnvironmentService(IProcessRunner processRunner) : IEnvironm
         return results;
     }
 
-    public Task<ProcessResult> InstallBundlerAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default)
-        => processRunner.RunAsync("gem", "install bundler", output: output, cancellationToken: cancellationToken);
+    public async Task<ProcessResult> InstallBundlerAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default)
+    {
+        var gem = await EnsureGemAvailableAsync(output, cancellationToken).ConfigureAwait(false);
+        if (!gem.Success)
+            return gem;
 
-    public Task<ProcessResult> InstallJekyllAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default)
-        => processRunner.RunAsync("gem", "install jekyll bundler", output: output, cancellationToken: cancellationToken);
+        return await processRunner.RunAsync("gem", "install bundler", output: output, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<ProcessResult> InstallJekyllAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default)
+    {
+        var gem = await EnsureGemAvailableAsync(output, cancellationToken).ConfigureAwait(false);
+        if (!gem.Success)
+            return gem;
+
+        return await processRunner.RunAsync("gem", "install jekyll bundler", output: output, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<ProcessResult> EnsureGemAvailableAsync(
+        IProgress<string>? output,
+        CancellationToken cancellationToken)
+    {
+        var gem = await processRunner.RunAsync("gem", "-v", cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        if (gem.Success)
+            return gem;
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return new ProcessResult
+            {
+                ExitCode = -1,
+                StdErr = "找不到 Ruby/Gem。請先安裝 Ruby，再重新執行安裝 Jekyll + Bundler。"
+            };
+        }
+
+        output?.Report("找不到 Ruby/Gem，正在嘗試透過 winget 安裝 RubyInstaller with DevKit...");
+        var wingetArgs =
+            $"install --id {RubyWingetPackageId} -e --silent --accept-package-agreements --accept-source-agreements";
+        var rubyInstall = await processRunner.RunAsync(
+                "winget",
+                wingetArgs,
+                output: output,
+                cancellationToken: cancellationToken,
+                timeoutMs: 20 * 60 * 1000)
+            .ConfigureAwait(false);
+
+        if (!rubyInstall.Success)
+        {
+            return new ProcessResult
+            {
+                ExitCode = rubyInstall.ExitCode,
+                StdOut = rubyInstall.StdOut,
+                StdErr = (rubyInstall.StdErr + Environment.NewLine
+                    + "無法自動安裝 Ruby。請先安裝 RubyInstaller with DevKit，或確認 winget 可用後再試一次。").Trim()
+            };
+        }
+
+        output?.Report("Ruby 安裝完成，重新檢查 gem...");
+        gem = await processRunner.RunAsync("gem", "-v", cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        if (gem.Success)
+            return gem;
+
+        return new ProcessResult
+        {
+            ExitCode = gem.ExitCode,
+            StdOut = rubyInstall.CombinedOutput,
+            StdErr = (gem.StdErr + Environment.NewLine
+                + "Ruby 似乎已安裝，但目前程序仍找不到 gem。請關閉並重新開啟 Jekyller 後再試一次。").Trim()
+        };
+    }
 
     private static string ExtractVersion(string text)
     {

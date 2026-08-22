@@ -67,7 +67,7 @@ public sealed class ProcessRunner : IProcessRunner
         {
             FileName = fileName,
             Arguments = arguments,
-            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+            WorkingDirectory = ResolveWorkingDirectory(workingDirectory),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -94,10 +94,12 @@ public sealed class ProcessRunner : IProcessRunner
             var extras = new[]
             {
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ruby", "bin"),
+                @"C:\Ruby35-x64\bin",
                 @"C:\Ruby34-x64\bin",
                 @"C:\Ruby33-x64\bin",
                 @"C:\Ruby32-x64\bin",
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WinGet", "Links"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "cmd"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "GitHub CLI")
             };
@@ -190,5 +192,21 @@ public sealed class ProcessRunner : IProcessRunner
             StdOut = stdout.ToString(),
             StdErr = stderr.ToString()
         };
+    }
+
+    private static string ResolveWorkingDirectory(string? workingDirectory)
+    {
+        if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
+            return workingDirectory;
+
+        var current = Environment.CurrentDirectory;
+        if (!string.IsNullOrWhiteSpace(current) && Directory.Exists(current))
+            return current;
+
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (!string.IsNullOrWhiteSpace(documents) && Directory.Exists(documents))
+            return documents;
+
+        return Path.GetTempPath();
     }
 }
