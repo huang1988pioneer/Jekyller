@@ -103,6 +103,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             _lastDeploymentState = null;
             _lastExpectedDeploymentId = null;
             await RefreshAsync().ConfigureAwait(true);
+            await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         };
         EnsureDeploymentMonitorStarted();
         _ = RefreshAsync();
@@ -143,6 +144,12 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             {
                 RemoteSummary = "尚未開啟專案";
                 RepoName = string.Empty;
+                PagesUrl = string.Empty;
+                PagesSummary = "尚未查詢";
+                DeploymentStatus = "尚未查詢";
+                DeploymentMonitorTitle = "尚未選擇網站";
+                DeploymentMonitorSummary = "請先在「環境建立」開啟或建立 Jekyll 網站。";
+                DeploymentMonitorSchedule = "選擇網站後開始每 5 分鐘檢查";
                 return;
             }
 
@@ -161,6 +168,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 $"Repo：{(info.Owner is null ? "—" : $"{info.Owner}/{info.Repo}")}";
 
             await RefreshPagesStatusAsync().ConfigureAwait(true);
+            await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         }
         finally
         {
@@ -220,7 +228,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
             StatusMessage = result.Success
-                ? "已推送並已請求啟用 GitHub Pages；正在等待 Actions 部署確認"
+                ? PushCompletedStatusMessage(result)
                 : "連結或部署失敗；請查看操作日誌";
             if (!result.Success) return;
 
@@ -317,7 +325,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
             StatusMessage = result.Success
-                ? "已推送並已請求啟用 GitHub Pages；正在等待 Actions 部署確認"
+                ? PushCompletedStatusMessage(result)
                 : "部署過程有錯誤，請查看日誌";
             if (!result.Success) return;
 
@@ -625,5 +633,12 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(line)) return;
         var formatted = $"[{DateTime.Now:HH:mm:ss}] {line.Trim()}";
         Log = string.IsNullOrEmpty(Log) ? formatted : Log + Environment.NewLine + formatted;
+    }
+
+    private static string PushCompletedStatusMessage(ProcessResult result)
+    {
+        return result.CombinedOutput.Contains("沒有管理 GitHub Pages 設定所需的 admin 權限", StringComparison.OrdinalIgnoreCase)
+            ? "網站檔案已推送；目前帳號無法自動啟用 Pages，請由 Repository 擁有者在 Settings > Pages 將 Source 設為 GitHub Actions。"
+            : "已推送並已請求啟用 GitHub Pages；正在等待 Actions 部署確認";
     }
 }

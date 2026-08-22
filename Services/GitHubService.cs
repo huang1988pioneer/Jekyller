@@ -49,7 +49,8 @@ public interface IGitHubService
     Task<ProcessResult> EnablePagesFromActionsAsync(
         string projectPath,
         IProgress<string>? output = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool allowManualSetupIfPushCompleted = false);
     Task<string?> DetectRemoteAsync(string projectPath, CancellationToken cancellationToken = default);
     Task<(string Owner, string Repo)?> ParseOwnerRepoAsync(string projectPath, CancellationToken cancellationToken = default);
     Task<ProcessResult> OpenGhAuthLoginAsync(CancellationToken cancellationToken = default);
@@ -311,7 +312,11 @@ public sealed partial class GitHubService : IGitHubService
         }
 
         progress?.Report("啟用 GitHub Pages（GitHub Actions）…");
-        var pages = await EnablePagesFromActionsAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
+        var pages = await EnablePagesFromActionsAsync(
+            projectPath,
+            progress,
+            cancellationToken,
+            allowManualSetupIfPushCompleted: true).ConfigureAwait(false);
         if (pages.Success)
         {
             return new ProcessResult
@@ -456,7 +461,11 @@ public sealed partial class GitHubService : IGitHubService
         if (!push.Success) return push;
 
         progress?.Report("啟用 GitHub Pages（Actions）…");
-        return await EnablePagesFromActionsAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
+        return await EnablePagesFromActionsAsync(
+            projectPath,
+            progress,
+            cancellationToken,
+            allowManualSetupIfPushCompleted: true).ConfigureAwait(false);
     }
 
     public async Task<ProcessResult> PushAsync(
@@ -657,7 +666,8 @@ public sealed partial class GitHubService : IGitHubService
     public async Task<ProcessResult> EnablePagesFromActionsAsync(
         string projectPath,
         IProgress<string>? output = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowManualSetupIfPushCompleted = false)
     {
         var info = await GetInfoAsync(projectPath, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(info.Owner) || string.IsNullOrWhiteSpace(info.Repo))
@@ -728,10 +738,16 @@ public sealed partial class GitHubService : IGitHubService
         {
             return new ProcessResult
             {
-                ExitCode = -1,
-                StdOut = "網站檔案與 GitHub Actions workflow 已成功推送。",
-                StdErr = $"目前登入帳號具有 {info.Owner}/{info.Repo} 的推送權限，但沒有管理 GitHub Pages 設定所需的 admin 權限。\n" +
-                         "請 Repository 擁有者開啟 Settings > Pages，在 Build and deployment 的 Source 選擇 GitHub Actions；完成後回到 Jekyller 按「查詢 Pages 狀態」。"
+                ExitCode = allowManualSetupIfPushCompleted ? 0 : -1,
+                StdOut = allowManualSetupIfPushCompleted
+                    ? $"網站檔案與 GitHub Actions workflow 已成功推送到 {info.Owner}/{info.Repo}。\n" +
+                      "目前登入帳號沒有管理 GitHub Pages 設定所需的 admin 權限，因此無法自動切換 Pages Source。\n" +
+                      "請 Repository 擁有者開啟 Settings > Pages，在 Build and deployment 的 Source 選擇 GitHub Actions；完成後回到 Jekyller 按「查詢 Pages 狀態」。"
+                    : "網站檔案與 GitHub Actions workflow 已成功推送。",
+                StdErr = allowManualSetupIfPushCompleted
+                    ? string.Empty
+                    : $"目前登入帳號具有 {info.Owner}/{info.Repo} 的推送權限，但沒有管理 GitHub Pages 設定所需的 admin 權限。\n" +
+                      "請 Repository 擁有者開啟 Settings > Pages，在 Build and deployment 的 Source 選擇 GitHub Actions；完成後回到 Jekyller 按「查詢 Pages 狀態」。"
             };
         }
 
