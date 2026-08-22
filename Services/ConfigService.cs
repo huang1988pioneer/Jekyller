@@ -96,12 +96,12 @@ public sealed class ConfigService : IConfigService
         raw = UpsertScalar(raw, "url", fields.Url);
         raw = UpsertScalar(raw, "baseurl", fields.BaseUrl);
         raw = UpsertScalar(raw, "email", fields.Email);
-        raw = UpsertScalar(raw, "theme", fields.Theme);
-        raw = UpsertScalar(raw, "remote_theme", fields.RemoteTheme);
-        raw = UpsertScalar(raw, "lang", fields.Lang);
-        raw = UpsertScalar(raw, "timezone", fields.Timezone);
-        raw = UpsertScalar(raw, "markdown", fields.Markdown);
-        raw = UpsertScalar(raw, "permalink", fields.Permalink);
+        raw = UpsertOptionalScalar(raw, "theme", fields.Theme);
+        raw = UpsertOptionalScalar(raw, "remote_theme", fields.RemoteTheme);
+        raw = UpsertOptionalScalar(raw, "lang", fields.Lang);
+        raw = UpsertOptionalScalar(raw, "timezone", fields.Timezone);
+        raw = UpsertOptionalScalar(raw, "markdown", fields.Markdown);
+        raw = UpsertOptionalScalar(raw, "permalink", fields.Permalink);
 
         await File.WriteAllTextAsync(path, NormalizeNewlines(raw), new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);
@@ -209,7 +209,7 @@ public sealed class ConfigService : IConfigService
             ? $"\"{value.Replace("\\", "\\\\").Replace("\"", "\\\"")}\""
             : value;
 
-        var pattern = new Regex($@"(?m)^({Regex.Escape(key)}\s*:\s*).*$");
+        var pattern = new Regex($@"(?m)^({Regex.Escape(key)}\s*:\s*).*(?:\r?\n[ \t]+.*)*");
         if (pattern.IsMatch(raw))
             return pattern.Replace(raw, $"$1{rendered}", 1);
 
@@ -217,6 +217,23 @@ public sealed class ConfigService : IConfigService
             raw += Environment.NewLine;
 
         return raw + $"{key}: {rendered}{Environment.NewLine}";
+    }
+
+    private static string UpsertOptionalScalar(string raw, string key, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            return UpsertScalar(raw, key, value);
+
+        return RemoveKeyBlock(raw, key);
+    }
+
+    private static string RemoveKeyBlock(string raw, string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return raw;
+
+        var pattern = new Regex($@"(?m)^{Regex.Escape(key)}\s*:.*(?:\r?\n[ \t]+.*)*\r?\n?");
+        return pattern.Replace(raw, string.Empty, 1);
     }
 
     private static string NormalizeNewlines(string text)

@@ -3,8 +3,9 @@
              xmlns:vm="using:Jekyller.ViewModels"
              x:Class="Jekyller.Views.GitHubView"
              x:DataType="vm:GitHubViewModel">
-  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Spacing="12" Margin="8" MaxWidth="980">
+  <Grid RowDefinitions="*,Auto" Margin="8">
+    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="12" MaxWidth="980">
       <TextBlock Text="GitHub Pages" FontSize="22" FontWeight="Bold" />
       <TextBlock Text="將網站推上 GitHub，以 GitHub Actions 部署 Pages，並查詢上線狀態。使用者網站（owner.github.io）發佈到 https://owner.github.io/；專案網站則為 https://owner.github.io/repo/。"
                  Opacity="0.75" TextWrapping="Wrap" />
@@ -135,19 +136,26 @@
         </StackPanel>
       </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="8">
-          <TextBlock Text="操作日誌" Classes="sectionTitle" />
-          <TextBox Text="{Binding Log}"
-                   IsReadOnly="True"
-                   AcceptsReturn="True"
-                   Classes="logBox"
-                   MinHeight="160"
-                   TextWrapping="Wrap"
-                   FontFamily="Consolas, Courier New, monospace" />
-          <TextBlock Text="{Binding StatusMessage}" Opacity="0.75" TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
-    </StackPanel>
-  </ScrollViewer>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="1" Classes="card" Margin="0,12,0,0">
+      <Grid RowDefinitions="Auto,Auto,*" MaxWidth="980">
+        <TextBlock Text="操作日誌" Classes="sectionTitle" />
+        <TextBlock Grid.Row="1" Text="{Binding StatusMessage}" Opacity="0.75"
+                   TextWrapping="Wrap" Margin="0,4,0,8" />
+        <TextBox Grid.Row="2"
+                 Text="{Binding Log}"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 Classes="logBox"
+                 Height="220"
+                 TextWrapping="Wrap"
+                 FontFamily="Consolas, Courier New, monospace"
+                 VerticalContentAlignment="Top"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+      </Grid>
+    </Border>
+  </Grid>
 </UserControl>

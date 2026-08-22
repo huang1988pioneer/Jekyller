@@ -268,11 +268,17 @@ public sealed partial class GitHubService : IGitHubService
         var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
         progress?.Report(workflowMessage);
 
+        var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+            .ConfigureAwait(false);
+        if (platformError is not null) return platformError;
+
         var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
         if (markerError is not null) return markerError;
 
         progress?.Report("提交檔案…");
-        await CommitAllAsync(projectPath, "Initial commit via Jekyller", progress, cancellationToken).ConfigureAwait(false);
+        var initialCommit = await CommitAllAsync(projectPath, "Initial commit via Jekyller", progress, cancellationToken)
+            .ConfigureAwait(false);
+        if (!initialCommit.Success) return initialCommit;
 
         var visibility = isPrivate ? "--private" : "--public";
         progress?.Report($"建立 GitHub repository：{repoName}…");
@@ -306,11 +312,20 @@ public sealed partial class GitHubService : IGitHubService
 
         progress?.Report("啟用 GitHub Pages（GitHub Actions）…");
         var pages = await EnablePagesFromActionsAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
+        if (pages.Success)
+        {
+            return new ProcessResult
+            {
+                ExitCode = 0,
+                StdOut = $"Repository 已建立並推送完成。\n{pages.CombinedOutput}"
+            };
+        }
+
         return new ProcessResult
         {
-            ExitCode = pages.Success ? 0 : pages.ExitCode,
-            StdOut = $"Repo ready.\n{pages.CombinedOutput}",
-            StdErr = pages.Success ? string.Empty : pages.StdErr
+            ExitCode = pages.ExitCode,
+            StdOut = "Repository 已建立並推送完成，但 GitHub Pages 設定尚未完成。",
+            StdErr = pages.StdErr
         };
     }
 
@@ -422,6 +437,9 @@ public sealed partial class GitHubService : IGitHubService
         progress?.Report("加入 GitHub Actions workflow 並提交網站…");
         var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
         progress?.Report(workflowMessage);
+        var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+            .ConfigureAwait(false);
+        if (platformError is not null) return platformError;
         var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
         if (markerError is not null) return markerError;
         var commit = await CommitAllAsync(projectPath, commitMessage, progress, cancellationToken).ConfigureAwait(false);
@@ -450,22 +468,57 @@ public sealed partial class GitHubService : IGitHubService
         progress?.Report("提交變更…");
         var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
         progress?.Report(workflowMessage);
+        var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+            .ConfigureAwait(false);
+        if (platformError is not null) return platformError;
         var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
         if (markerError is not null) return markerError;
         var commit = await CommitAllAsync(projectPath, commitMessage, progress, cancellationToken).ConfigureAwait(false);
         progress?.Report(commit.CombinedOutput);
+        if (!commit.Success) return commit;
 
-        progress?.Report("git push…");
+        var branch = await GetCurrentOrRemoteDefaultBranchAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        if (branch is null)
+        {
+            return new ProcessResult
+            {
+                ExitCode = -1,
+                StdErr = "無法判斷要推送的 Git branch，已停止推送。"
+            };
+        }
+
+        progress?.Report($"git push -u origin HEAD:{branch}…");
         return await _processRunner.RunAsync(
-            "git", "push", projectPath, progress, cancellationToken, timeoutMs: 180_000).ConfigureAwait(false);
+            "git", $"push -u origin HEAD:\"{branch}\"", projectPath, progress, cancellationToken, timeoutMs: 180_000)
+            .ConfigureAwait(false);
     }
 
-    public Task<ProcessResult> PullAsync(
+    public async Task<ProcessResult> PullAsync(
         string projectPath,
         IProgress<string>? output = null,
         CancellationToken cancellationToken = default)
-        => _processRunner.RunAsync(
-            "git", "pull --ff-only", projectPath, output, cancellationToken, timeoutMs: 120_000);
+    {
+        var branch = await GetCurrentOrRemoteDefaultBranchAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        if (branch is null)
+        {
+            return new ProcessResult
+            {
+                ExitCode = -1,
+                StdErr = "無法判斷要拉取的 Git branch，已停止 pull。"
+            };
+        }
+
+        output?.Report("從 origin 抓取最新變更…");
+        var fetch = await _processRunner.RunAsync(
+            "git", "fetch origin --prune", projectPath, output, cancellationToken, timeoutMs: 120_000)
+            .ConfigureAwait(false);
+        if (!fetch.Success) return fetch;
+
+        output?.Report($"合併 origin/{branch}（fast-forward only）…");
+        return await _processRunner.RunAsync(
+            "git", $"merge --ff-only \"origin/{branch}\"", projectPath, output, cancellationToken, timeoutMs: 120_000)
+            .ConfigureAwait(false);
+    }
 
     public async Task<string> GetLatestDeploymentAsync(string projectPath, CancellationToken cancellationToken = default)
     {
@@ -584,8 +637,8 @@ public sealed partial class GitHubService : IGitHubService
                 Cname = cname,
                 Message = status switch
                 {
-                    "built" => "網站已成功建置並上線。",
-                    "building" => "正在建置中…",
+                    "built" => "GitHub Pages 已啟用，最近一次 Pages 狀態為 built；是否為本次最新內容請看線上版本監控或 Actions。",
+                    "building" => "GitHub Pages 正在建置中；尚不能判定已上線。",
                     "errored" => "建置發生錯誤，請檢查 Actions 日誌。",
                     _ => $"GitHub Pages 狀態：{status}"
                 }
@@ -616,13 +669,50 @@ public sealed partial class GitHubService : IGitHubService
             };
         }
 
+        output?.Report("檢查目前 GitHub Pages 設定…");
+        var current = await _processRunner.RunAsync(
+            "gh",
+            $"api repos/{info.Owner}/{info.Repo}/pages",
+            projectPath,
+            timeoutMs: 30_000,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        var pagesExist = current.Success;
+        if (pagesExist)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(current.StdOut);
+                var buildType = doc.RootElement.TryGetProperty("build_type", out var buildTypeProperty)
+                    ? buildTypeProperty.GetString() ?? string.Empty
+                    : string.Empty;
+                if (buildType.Equals("workflow", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new ProcessResult
+                    {
+                        ExitCode = 0,
+                        StdOut = "GitHub Pages 已設定為 GitHub Actions，無需管理權限再次修改。"
+                    };
+                }
+            }
+            catch
+            {
+                // Fall through to the normal permission/update path so GitHub can report a clear error.
+            }
+        }
+        else if (!current.CombinedOutput.Contains("404", StringComparison.OrdinalIgnoreCase)
+                 && !current.CombinedOutput.Contains("Not Found", StringComparison.OrdinalIgnoreCase))
+        {
+            return current;
+        }
+
+        output?.Report("確認 GitHub Pages 管理權限…");
         var permission = await _processRunner.RunAsync(
             "gh",
             $"api repos/{info.Owner}/{info.Repo} --jq .permissions.admin",
             projectPath,
-            output,
-            cancellationToken,
-            timeoutMs: 30_000).ConfigureAwait(false);
+            timeoutMs: 30_000,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (!permission.Success)
         {
@@ -643,22 +733,6 @@ public sealed partial class GitHubService : IGitHubService
                 StdErr = $"目前登入帳號具有 {info.Owner}/{info.Repo} 的推送權限，但沒有管理 GitHub Pages 設定所需的 admin 權限。\n" +
                          "請 Repository 擁有者開啟 Settings > Pages，在 Build and deployment 的 Source 選擇 GitHub Actions；完成後回到 Jekyller 按「查詢 Pages 狀態」。"
             };
-        }
-
-        var current = await _processRunner.RunAsync(
-            "gh",
-            $"api repos/{info.Owner}/{info.Repo}/pages",
-            projectPath,
-            output,
-            cancellationToken,
-            timeoutMs: 30_000).ConfigureAwait(false);
-
-        var pagesExist = current.Success;
-        if (!pagesExist
-            && !current.CombinedOutput.Contains("404", StringComparison.OrdinalIgnoreCase)
-            && !current.CombinedOutput.Contains("Not Found", StringComparison.OrdinalIgnoreCase))
-        {
-            return current;
         }
 
         var method = pagesExist ? "PUT" : "POST";
@@ -839,6 +913,66 @@ public sealed partial class GitHubService : IGitHubService
 
         if (!string.Equals(existing, updated, StringComparison.Ordinal))
             await File.WriteAllTextAsync(path, updated, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ProcessResult?> EnsureGitHubActionsBundlePlatformsAsync(
+        string projectPath,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var lockfile = Path.Combine(projectPath, "Gemfile.lock");
+        if (!File.Exists(lockfile))
+            return null;
+
+        progress?.Report("確認 Gemfile.lock 支援 GitHub Actions Linux 平台…");
+        var result = await _processRunner.RunAsync(
+            "bundle",
+            "lock --add-platform x86_64-linux",
+            projectPath,
+            progress,
+            cancellationToken,
+            timeoutMs: 120_000).ConfigureAwait(false);
+
+        if (result.Success)
+            return null;
+
+        return new ProcessResult
+        {
+            ExitCode = result.ExitCode,
+            StdErr = "無法更新 Gemfile.lock 以支援 GitHub Actions Linux 平台；已停止提交與推送。\n" +
+                     result.CombinedOutput
+        };
+    }
+
+    private async Task<string?> GetCurrentOrRemoteDefaultBranchAsync(
+        string projectPath,
+        CancellationToken cancellationToken)
+    {
+        var current = await _processRunner.RunAsync(
+            "git", "branch --show-current", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        var branch = current.Success ? current.StdOut.Trim() : string.Empty;
+        if (!string.IsNullOrWhiteSpace(branch))
+            return GitBranchRegex().IsMatch(branch) ? branch : null;
+
+        var remoteDefault = await GetRemoteDefaultBranchAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        return remoteDefault is not null && GitBranchRegex().IsMatch(remoteDefault)
+            ? remoteDefault
+            : null;
+    }
+
+    private async Task<string?> GetRemoteDefaultBranchAsync(
+        string projectPath,
+        CancellationToken cancellationToken)
+    {
+        var remoteHead = await _processRunner.RunAsync(
+            "git", "ls-remote --symref origin HEAD", projectPath, timeoutMs: 30_000, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        if (!remoteHead.Success)
+            return "main";
+
+        var branchMatch = RemoteHeadRegex().Match(remoteHead.StdOut);
+        return branchMatch.Success ? branchMatch.Groups["branch"].Value : "main";
     }
 
     private static (string? Owner, string? Repo) ParseGitHubRemote(string url)

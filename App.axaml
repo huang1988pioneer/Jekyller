@@ -42,6 +42,9 @@
         <Style Selector="TextBox.logBox">
             <Setter Property="Background" Value="#0D1218" />
             <Setter Property="Padding" Value="10" />
+            <Setter Property="VerticalContentAlignment" Value="Top" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
         </Style>
     </Application.Styles>
 </Application>

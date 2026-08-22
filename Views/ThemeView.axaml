@@ -196,6 +196,7 @@
 
       <TabItem Header="日誌">
         <TextBox Text="{Binding Log}" IsReadOnly="True" AcceptsReturn="True" Margin="4"
+                 Classes="logBox"
                  TextWrapping="Wrap" FontFamily="Consolas,Courier New,monospace"
                  VerticalContentAlignment="Top" />
       </TabItem>

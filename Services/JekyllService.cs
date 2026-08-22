@@ -76,29 +76,41 @@ public sealed class JekyllService(IProcessRunner processRunner) : IJekyllService
         CancellationToken cancellationToken = default)
         => processRunner.RunAsync("bundle", "install", projectPath, output, cancellationToken);
 
-    public Task<ProcessResult> ServeAsync(
+    public async Task<ProcessResult> ServeAsync(
         string projectPath,
         IProgress<string>? output = null,
         CancellationToken cancellationToken = default)
-        => processRunner.RunAsync("bundle", "exec jekyll serve --livereload", projectPath, output, cancellationToken);
+    {
+        var clean = JekyllWorkspace.CleanGeneratedCaches(projectPath, output);
+        if (clean is not null)
+            return clean;
 
-    public Task<ProcessResult> BuildAsync(
+        return await processRunner.RunAsync("bundle", "exec jekyll serve --livereload", projectPath, output, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<ProcessResult> BuildAsync(
         string projectPath,
         IProgress<string>? output = null,
         CancellationToken cancellationToken = default,
         bool production = false)
     {
+        var clean = JekyllWorkspace.CleanGeneratedCaches(projectPath, output);
+        if (clean is not null)
+            return clean;
+
         IReadOnlyDictionary<string, string?>? env = production
             ? new Dictionary<string, string?> { ["JEKYLL_ENV"] = "production" }
             : null;
 
-        return processRunner.RunAsync(
-            "bundle",
-            "exec jekyll build",
-            projectPath,
-            output,
-            cancellationToken,
-            env);
+        return await processRunner.RunAsync(
+                "bundle",
+                "exec jekyll build",
+                projectPath,
+                output,
+                cancellationToken,
+                env)
+            .ConfigureAwait(false);
     }
 
     public bool LooksLikeJekyllSite(string path)

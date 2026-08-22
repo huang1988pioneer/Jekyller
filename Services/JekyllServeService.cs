@@ -47,6 +47,10 @@ public sealed class JekyllServeService : IJekyllServeService
             throw new InvalidOperationException("專案路徑無效。");
 
         await StopAsync().ConfigureAwait(false);
+        var clean = JekyllWorkspace.CleanGeneratedCaches(projectPath, new Progress<string>(message =>
+            OutputReceived?.Invoke(this, message)));
+        if (clean is not null)
+            throw new InvalidOperationException(clean.CombinedOutput);
 
         Port = port <= 0 ? 4000 : port;
         SiteUrl = $"http://127.0.0.1:{Port}/";
@@ -68,7 +72,7 @@ public sealed class JekyllServeService : IJekyllServeService
             StandardErrorEncoding = Encoding.UTF8
         };
 
-        EnrichPath(psi);
+        WindowsToolResolver.Prepare(psi);
 
         Process process;
         try
@@ -137,7 +141,7 @@ public sealed class JekyllServeService : IJekyllServeService
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
-        EnrichPath(psi);
+        WindowsToolResolver.Prepare(psi);
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) HandleLine(e.Data); };
@@ -239,30 +243,6 @@ public sealed class JekyllServeService : IJekyllServeService
                 SiteUrl += "/";
             StateChanged?.Invoke(this, EventArgs.Empty);
         }
-    }
-
-    private static void EnrichPath(ProcessStartInfo psi)
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        var path = psi.Environment["PATH"] ?? string.Empty;
-        var extras = new[]
-        {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ruby", "bin"),
-            @"C:\Ruby34-x64\bin",
-            @"C:\Ruby33-x64\bin",
-            @"C:\Ruby32-x64\bin",
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WinGet", "Links")
-        };
-
-        foreach (var extra in extras)
-        {
-            if (Directory.Exists(extra) && !path.Contains(extra, StringComparison.OrdinalIgnoreCase))
-                path = extra + Path.PathSeparator + path;
-        }
-
-        psi.Environment["PATH"] = path;
     }
 
     public void Dispose()

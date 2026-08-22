@@ -220,8 +220,10 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
             StatusMessage = result.Success
-                ? "已連結 repository、推送網站並啟用 GitHub Pages"
+                ? "已推送並已請求啟用 GitHub Pages；正在等待 Actions 部署確認"
                 : "連結或部署失敗；請查看操作日誌";
+            if (!result.Success) return;
+
             await RefreshAsync().ConfigureAwait(true);
             await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         }
@@ -283,13 +285,13 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         {
             var site = _project.ProjectPath!;
             var info = await _github.GetInfoAsync(site).ConfigureAwait(true);
-            if (SyncRecommendedSiteUrls && !string.IsNullOrWhiteSpace(info.GhUser))
+            if (SyncRecommendedSiteUrls)
             {
-                var guessed = GitHubService.ParseRepositoryTarget($"https://github.com/{info.GhUser}/{RepoName.Trim()}");
-                if (guessed.IsValid)
+                var target = GetSiteUrlTarget(info, RepoName.Trim());
+                if (target is not null)
                 {
-                    await _github.UpdateSiteUrlsAsync(site, guessed).ConfigureAwait(true);
-                    AppendLog($"已將 _config.yml 的 url 設為 {guessed.JekyllUrl}，baseurl 設為 {(string.IsNullOrEmpty(guessed.JekyllBaseUrl) ? "\"\"" : guessed.JekyllBaseUrl)}");
+                    await _github.UpdateSiteUrlsAsync(site, target).ConfigureAwait(true);
+                    AppendLog($"已將 _config.yml 的 url 設為 {target.JekyllUrl}，baseurl 設為 {(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
                 }
             }
 
@@ -315,8 +317,10 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
             StatusMessage = result.Success
-                ? "已推送並嘗試啟用 GitHub Pages"
+                ? "已推送並已請求啟用 GitHub Pages；正在等待 Actions 部署確認"
                 : "部署過程有錯誤，請查看日誌";
+            if (!result.Success) return;
+
             await RefreshAsync().ConfigureAwait(true);
             await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         }
@@ -353,6 +357,16 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         IsBusy = true;
         try
         {
+            if (SyncRecommendedSiteUrls)
+            {
+                var target = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
+                if (target.IsValid)
+                {
+                    await _github.UpdateSiteUrlsAsync(site, target).ConfigureAwait(true);
+                    AppendLog($"已依 origin 同步 _config.yml：url={target.JekyllUrl}，baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
+                }
+            }
+
             StatusMessage = "正在以 production 設定建置 Jekyll 網站…";
             AppendLog("bundle exec jekyll build（JEKYLL_ENV=production）…");
             var build = await _jekyll.BuildAsync(site, new Progress<string>(AppendLog), production: true)
@@ -371,12 +385,13 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 {
                     AppendLog(m);
                     StatusMessage = m;
-                })).ConfigureAwait(true);
+            })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
-            StatusMessage = result.Success ? "推送完成" : "推送失敗";
-            await RefreshPagesStatusAsync().ConfigureAwait(true);
-            if (result.Success)
-                await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
+            StatusMessage = result.Success ? "推送完成；正在等待 Actions 部署確認" : "推送失敗";
+            if (!result.Success) return;
+
+            await RefreshPagesStatusAsync(updateStatusMessage: false).ConfigureAwait(true);
+            await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         }
         finally
         {
@@ -416,6 +431,8 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             var result = await _github.EnablePagesFromActionsAsync(_project.ProjectPath!).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
             StatusMessage = result.Success ? "已請求啟用 GitHub Pages" : "啟用失敗";
+            if (!result.Success) return;
+
             await RefreshPagesStatusAsync().ConfigureAwait(true);
         }
         finally
@@ -425,7 +442,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private async Task RefreshPagesStatusAsync()
+    private async Task RefreshPagesStatusAsync(bool updateStatusMessage = true)
     {
         if (!_project.HasProject) return;
 
@@ -439,7 +456,8 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             $"網址：{(string.IsNullOrWhiteSpace(status.HtmlUrl) ? "—" : status.HtmlUrl)}\n" +
             $"CNAME：{(string.IsNullOrWhiteSpace(status.Cname) ? "—" : status.Cname)}\n" +
             $"{status.Message}";
-        StatusMessage = status.Message;
+        if (updateStatusMessage)
+            StatusMessage = status.Message;
         DeploymentStatus = await _github.GetLatestDeploymentAsync(_project.ProjectPath!).ConfigureAwait(true);
     }
 
@@ -574,6 +592,25 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             IsCheckingDeployment = false;
             _deploymentCheckGate.Release();
         }
+    }
+
+    private static GitHubRepositoryTarget? GetSiteUrlTarget(GitRemoteInfo info, string repoName)
+    {
+        if (!string.IsNullOrWhiteSpace(info.RemoteUrl))
+        {
+            var remoteTarget = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
+            if (remoteTarget.IsValid)
+                return remoteTarget;
+        }
+
+        if (!string.IsNullOrWhiteSpace(info.GhUser) && !string.IsNullOrWhiteSpace(repoName))
+        {
+            var guessed = GitHubService.ParseRepositoryTarget($"https://github.com/{info.GhUser}/{repoName}");
+            if (guessed.IsValid)
+                return guessed;
+        }
+
+        return null;
     }
 
     private bool EnsureProject()
