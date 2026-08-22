@@ -7,9 +7,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RootNamespace>Jekyller</RootNamespace>
     <AssemblyName>Jekyller</AssemblyName>
-    <Version>1.2.2</Version>
-    <AssemblyVersion>1.2.2.0</AssemblyVersion>
-    <FileVersion>1.2.2.0</FileVersion>
+    <Version>1.2.3</Version>
+    <AssemblyVersion>1.2.3.0</AssemblyVersion>
+    <FileVersion>1.2.3.0</FileVersion>
     <Product>Jekyller</Product>
     <Authors>Jekyller</Authors>
     <Description>Jekyll 一站式桌面工作台 - 環境、主題、內容、GitHub Pages</Description>

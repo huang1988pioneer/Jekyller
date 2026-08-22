@@ -91,6 +91,7 @@ public sealed class ProcessRunner : IProcessRunner
         if (OperatingSystem.IsWindows())
         {
             var path = psi.Environment["PATH"] ?? string.Empty;
+            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var extras = new[]
             {
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ruby", "bin"),
@@ -98,6 +99,10 @@ public sealed class ProcessRunner : IProcessRunner
                 @"C:\Ruby34-x64\bin",
                 @"C:\Ruby33-x64\bin",
                 @"C:\Ruby32-x64\bin",
+                Path.Combine(userProfile, ".local", "share", "gem", "ruby", "3.5.0", "bin"),
+                Path.Combine(userProfile, ".local", "share", "gem", "ruby", "3.4.0", "bin"),
+                Path.Combine(userProfile, ".local", "share", "gem", "ruby", "3.3.0", "bin"),
+                Path.Combine(userProfile, ".local", "share", "gem", "ruby", "3.2.0", "bin"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WinGet", "Links"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "cmd"),
@@ -111,6 +116,7 @@ public sealed class ProcessRunner : IProcessRunner
             }
 
             psi.Environment["PATH"] = path;
+            ResolveWindowsCommand(psi, path);
         }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -208,5 +214,62 @@ public sealed class ProcessRunner : IProcessRunner
             return documents;
 
         return Path.GetTempPath();
+    }
+
+    private static void ResolveWindowsCommand(ProcessStartInfo psi, string path)
+    {
+        var resolved = ResolveWindowsExecutable(psi.FileName, path);
+        if (resolved is null)
+            return;
+
+        var extension = Path.GetExtension(resolved);
+        if (extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase))
+        {
+            var arguments = psi.Arguments;
+            psi.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+            psi.Arguments = string.IsNullOrWhiteSpace(arguments)
+                ? $"/d /c \"\"{resolved}\"\""
+                : $"/d /c \"\"{resolved}\" {arguments}\"";
+            return;
+        }
+
+        psi.FileName = resolved;
+    }
+
+    private static string? ResolveWindowsExecutable(string fileName, string path)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        var candidates = GetWindowsExecutableCandidates(fileName);
+        if (fileName.Contains(Path.DirectorySeparatorChar) || fileName.Contains(Path.AltDirectorySeparatorChar))
+            return candidates.FirstOrDefault(File.Exists);
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var candidate in candidates)
+            {
+                var fullPath = Path.Combine(directory, candidate);
+                if (File.Exists(fullPath))
+                    return fullPath;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> GetWindowsExecutableCandidates(string fileName)
+    {
+        if (Path.HasExtension(fileName))
+        {
+            yield return fileName;
+            yield break;
+        }
+
+        yield return fileName + ".exe";
+        yield return fileName + ".cmd";
+        yield return fileName + ".bat";
+        yield return fileName + ".com";
     }
 }
