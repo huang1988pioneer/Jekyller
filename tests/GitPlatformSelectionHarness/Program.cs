@@ -130,8 +130,12 @@ Assert(StaticPagesDeployment.ShouldPublishOutputBranch(codebergPagesTarget),
     "Codeberg Pages must publish the generated static output branch");
 Assert(StaticPagesDeployment.OutputBranchFor(GitHostingPlatform.Codeberg) == "pages",
     "Codeberg Pages output branch must be pages");
+Assert(!StaticPagesDeployment.ShouldPushSourceBranch(codebergPagesTarget),
+    "Codeberg Pages must not require write access to the source main branch");
 Assert(!StaticPagesDeployment.ShouldPublishOutputBranch(gitLabTarget),
     "GitLab should keep the CI/source repository flow");
+Assert(StaticPagesDeployment.ShouldPushSourceBranch(gitLabTarget),
+    "GitLab should keep pushing the source branch for CI");
 
 Assert(GitLabPagesCi.Configuration.Contains("image: \"hugomods/hugo:0.164.0\"", StringComparison.Ordinal),
     "GitLab Pages CI must pin the Hugo version used successfully by Hugoer");

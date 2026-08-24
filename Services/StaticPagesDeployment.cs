@@ -9,6 +9,9 @@ public static class StaticPagesDeployment
     public static bool ShouldPublishOutputBranch(GitHubRepositoryTarget target) =>
         target.IsValid && target.Platform == GitHostingPlatform.Codeberg;
 
+    public static bool ShouldPushSourceBranch(GitHubRepositoryTarget target) =>
+        !ShouldPublishOutputBranch(target);
+
     public static string? OutputBranchFor(GitHostingPlatform platform) =>
         platform == GitHostingPlatform.Codeberg ? CodebergPagesBranch : null;
 

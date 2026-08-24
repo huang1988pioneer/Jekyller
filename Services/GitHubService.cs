@@ -757,6 +757,7 @@ public sealed partial class GitHubService : IGitHubService
         else
         {
             progress?.Report($"提交網站到 {target.PlatformLabel}（不加入 GitHub Actions workflow）…");
+            await EnsureHostingNotesAsync(projectPath, target.Platform, cancellationToken).ConfigureAwait(false);
         }
         string? staticOutputDirectory = null;
         if (StaticPagesDeployment.ShouldPublishOutputBranch(target))
@@ -772,7 +773,8 @@ public sealed partial class GitHubService : IGitHubService
         var commit = await CommitAllAsync(projectPath, commitMessage, progress, cancellationToken).ConfigureAwait(false);
         if (!commit.Success) return commit;
 
-        if (target.Platform != GitHostingPlatform.GitHub)
+        if (target.Platform != GitHostingPlatform.GitHub
+            && StaticPagesDeployment.ShouldPushSourceBranch(target))
         {
             progress?.Report($"確認 {target.PlatformLabel} 推送權限…");
             var dryRun = await _processRunner.RunAsync(
@@ -789,19 +791,22 @@ public sealed partial class GitHubService : IGitHubService
                     dryRun);
         }
 
-        progress?.Report($"推送到 {target.Owner}/{target.Repository}…");
-        var push = await _processRunner.RunAsync(
-            "git",
-            $"push -u {remoteName} HEAD:\"{remoteBranch}\"",
-            projectPath,
-            progress,
-            cancellationToken,
-            timeoutMs: 180_000).ConfigureAwait(false);
-        if (!push.Success)
-            return GitHostingProcessErrors.WithRepositoryAccessHint(
-                target.Platform,
-                "推送",
-                push);
+        if (StaticPagesDeployment.ShouldPushSourceBranch(target))
+        {
+            progress?.Report($"推送到 {target.Owner}/{target.Repository}…");
+            var push = await _processRunner.RunAsync(
+                "git",
+                $"push -u {remoteName} HEAD:\"{remoteBranch}\"",
+                projectPath,
+                progress,
+                cancellationToken,
+                timeoutMs: 180_000).ConfigureAwait(false);
+            if (!push.Success)
+                return GitHostingProcessErrors.WithRepositoryAccessHint(
+                    target.Platform,
+                    "推送",
+                    push);
+        }
 
         if (StaticPagesDeployment.ShouldPublishOutputBranch(target))
         {
@@ -861,6 +866,10 @@ public sealed partial class GitHubService : IGitHubService
             var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
             if (markerError is not null) return markerError;
         }
+        else if (remoteTarget.IsValid)
+        {
+            await EnsureHostingNotesAsync(projectPath, remoteTarget.Platform, cancellationToken).ConfigureAwait(false);
+        }
         string? staticOutputDirectory = null;
         if (remoteTarget.IsValid && StaticPagesDeployment.ShouldPublishOutputBranch(remoteTarget))
         {
@@ -886,7 +895,9 @@ public sealed partial class GitHubService : IGitHubService
             };
         }
 
-        if (remoteTarget.IsValid && remoteTarget.Platform != GitHostingPlatform.GitHub)
+        if (remoteTarget.IsValid
+            && remoteTarget.Platform != GitHostingPlatform.GitHub
+            && StaticPagesDeployment.ShouldPushSourceBranch(remoteTarget))
         {
             progress?.Report($"確認 {remoteTarget.PlatformLabel} 推送權限…");
             var dryRun = await _processRunner.RunAsync(
@@ -903,12 +914,16 @@ public sealed partial class GitHubService : IGitHubService
                     dryRun);
         }
 
-        progress?.Report($"git push -u {remoteName} HEAD:{branch}…");
-        var push = await _processRunner.RunAsync(
-            "git", $"push -u {remoteName} HEAD:\"{branch}\"", projectPath, progress, cancellationToken, timeoutMs: 180_000)
-            .ConfigureAwait(false);
-        var sourcePush = GitHostingProcessErrors.WithRepositoryAccessHint(remoteTarget.Platform, "推送", push);
-        if (!sourcePush.Success) return sourcePush;
+        var sourcePush = new ProcessResult { ExitCode = 0 };
+        if (!remoteTarget.IsValid || StaticPagesDeployment.ShouldPushSourceBranch(remoteTarget))
+        {
+            progress?.Report($"git push -u {remoteName} HEAD:{branch}…");
+            var push = await _processRunner.RunAsync(
+                "git", $"push -u {remoteName} HEAD:\"{branch}\"", projectPath, progress, cancellationToken, timeoutMs: 180_000)
+                .ConfigureAwait(false);
+            sourcePush = GitHostingProcessErrors.WithRepositoryAccessHint(remoteTarget.Platform, "推送", push);
+            if (!sourcePush.Success) return sourcePush;
+        }
 
         if (remoteTarget.IsValid && StaticPagesDeployment.ShouldPublishOutputBranch(remoteTarget))
         {
@@ -1416,7 +1431,10 @@ public sealed partial class GitHubService : IGitHubService
             return new ProcessResult
             {
                 ExitCode = 0,
-                StdOut = $"已推送 {target.PlatformLabel} 靜態輸出到 {branch} branch。"
+                StdOut = target.Platform == GitHostingPlatform.Codeberg
+                    ? "已將 Jekyll 靜態輸出推送到 Codeberg Pages 的 pages 分支。\n" +
+                      "若尚未設定 Webhook，請在 Codeberg repository Settings > Webhooks 新增 Forgejo webhook，Target URL 使用 Pages 網址，Branch filter 設為 pages。"
+                    : $"已推送 {target.PlatformLabel} 靜態輸出到 {branch} branch。"
             };
         }
         finally
@@ -1497,6 +1515,29 @@ public sealed partial class GitHubService : IGitHubService
         await File.WriteAllTextAsync(
                 GitLabPagesCi.PathFor(projectPath),
                 GitLabPagesCi.Configuration,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task EnsureHostingNotesAsync(
+        string projectPath,
+        GitHostingPlatform platform,
+        CancellationToken cancellationToken)
+    {
+        if (platform is not (GitHostingPlatform.Codeberg or GitHostingPlatform.Bitbucket))
+            return;
+
+        var docsDir = Path.Combine(projectPath, "docs");
+        Directory.CreateDirectory(docsDir);
+        var fileName = platform == GitHostingPlatform.Codeberg
+            ? "codeberg-pages.md"
+            : "bitbucket-pages.md";
+        var content = platform == GitHostingPlatform.Codeberg
+            ? CodebergPagesNotes
+            : BitbucketPagesNotes;
+        await File.WriteAllTextAsync(
+                Path.Combine(docsDir, fileName),
+                content,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -1749,6 +1790,32 @@ public sealed partial class GitHubService : IGitHubService
         "支援 GitHub、GitLab、Codeberg、Bitbucket repository 網址，以及 GitHub Pages 網址。";
 
     private static readonly string[] SupportedHosts = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
+
+    private const string CodebergPagesNotes = """
+# Codeberg Pages deployment notes
+
+Jekyller can clone and push this repository to Codeberg. When you deploy, Jekyller builds the Jekyll site and pushes the generated static files from `_site/` to the `pages` branch.
+
+Codeberg Pages still needs one platform-side setup:
+
+1. User / organization site: use a repository named `pages`, publish from a branch named `pages`, and set the Pages webhook target to `https://<user>.codeberg.page/`.
+2. Repository site: publish from a branch named `pages`, and set the Pages webhook target to `https://<user>.codeberg.page/<repository>/`.
+3. After the webhook or Forgejo Actions workflow is configured on Codeberg, push updates from Jekyller again.
+
+Jekyller keeps Jekyll source in the normal local Git branch and publishes build output to the `pages` branch.
+""";
+
+    private const string BitbucketPagesNotes = """
+# Bitbucket static website deployment notes
+
+Jekyller can clone and push this repository to Bitbucket. Bitbucket Cloud static websites are workspace-level sites:
+
+1. The repository that serves the website must be named `<workspace>.bitbucket.io`.
+2. The live URL is `https://<workspace>.bitbucket.io/`.
+3. Jekyller builds the Jekyll site and publishes generated static output.
+
+Bitbucket does not provide GitHub-style per-project Pages URLs.
+""";
 
     private const string GitHubPagesWorkflow = """
         name: Deploy Jekyll to GitHub Pages

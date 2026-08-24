@@ -32,6 +32,9 @@ public static class GitHostingProcessErrors
             "Authentication failed",
             "HTTP Basic: Access denied",
             "Permission denied",
+            "not allowed to push to branch",
+            "pre-receive hook declined",
+            "protected branch",
             "403",
             "401");
 
