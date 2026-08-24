@@ -689,7 +689,10 @@ public sealed partial class GitHubService : IGitHubService
         var remoteBranch = branchMatch.Success ? branchMatch.Groups["branch"].Value : "main";
         if (!GitBranchRegex().IsMatch(remoteBranch))
             return new ProcessResult { ExitCode = -1, StdErr = "遠端預設分支名稱格式不安全，已停止操作。" };
-        var remoteHasCommit = RemoteHeadCommitRegex().IsMatch(remoteHead.StdOut);
+        var remoteRefCheck = await _processRunner.RunAsync(
+            "git", $"rev-parse --verify \"refs/remotes/{remoteName}/{remoteBranch}\"", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        var remoteHasCommit = remoteRefCheck.Success || RemoteHeadCommitRegex().IsMatch(remoteHead.StdOut);
 
         var localHead = await _processRunner.RunAsync(
             "git", "rev-parse --verify HEAD", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
@@ -715,6 +718,7 @@ public sealed partial class GitHubService : IGitHubService
         }
         else if (remoteHasCommit && localHead.Success)
         {
+            await CommitAllAsync(projectPath, "Pre-sync local site files", progress, cancellationToken).ConfigureAwait(false);
             progress?.Report($"合併遠端 {remoteBranch}（允許初始 README 歷史）…");
             var merge = await _processRunner.RunAsync(
                 "git",
@@ -1894,7 +1898,7 @@ Bitbucket does not provide GitHub-style per-project Pages URLs.
     [GeneratedRegex(@"ref:\s+refs/heads/(?<branch>[^\s]+)\s+HEAD")]
     private static partial Regex RemoteHeadRegex();
 
-    [GeneratedRegex(@"(?m)^[0-9a-f]{40,64}\s+HEAD$")]
+    [GeneratedRegex(@"(?m)^[0-9a-f]{40,64}\s+HEAD\r?$")]
     private static partial Regex RemoteHeadCommitRegex();
 
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._/-]*$")]
