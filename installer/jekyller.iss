@@ -1,9 +1,9 @@
 ; Inno Setup 6 script for Jekyller
 ; Build via scripts/publish.ps1 (auto) or:
-;   ISCC installer\jekyller.iss /DMyAppVersion=1.2.6 /DMyPublishDir=..\dist\publish\win-x64
+;   ISCC installer\jekyller.iss /DMyAppVersion=1.2.7 /DMyPublishDir=..\dist\publish\win-x64
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.6"
+  #define MyAppVersion "1.2.7"
 #endif
 #ifndef MyPublishDir
   #define MyPublishDir "..\dist\publish\win-x64"
