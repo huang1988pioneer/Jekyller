@@ -137,11 +137,11 @@ Assert(!StaticPagesDeployment.ShouldPublishOutputBranch(gitLabTarget),
 Assert(StaticPagesDeployment.ShouldPushSourceBranch(gitLabTarget),
     "GitLab should keep pushing the source branch for CI");
 
-Assert(GitLabPagesCi.Configuration.Contains("image: \"hugomods/hugo:0.164.0\"", StringComparison.Ordinal),
-    "GitLab Pages CI must pin the Hugo version used successfully by Hugoer");
-Assert(!GitLabPagesCi.Configuration.Contains("image: \"hugomods/hugo:exts\"", StringComparison.Ordinal),
-    "GitLab Pages CI must not use the floating exts tag that currently resolves to an incompatible Hugo version");
-Assert(GitLabPagesCi.Configuration.Contains("pages: true", StringComparison.Ordinal),
+Assert(GitLabPagesCi.Configuration.Contains("image: ruby:3.3", StringComparison.Ordinal),
+    "GitLab Pages CI must use Ruby for Jekyll");
+Assert(GitLabPagesCi.Configuration.Contains("bundle exec jekyll build -d public", StringComparison.Ordinal),
+    "GitLab Pages CI must build Jekyll into public directory");
+Assert(GitLabPagesCi.Configuration.Contains("pages:", StringComparison.Ordinal),
     "GitLab Pages CI must publish the public artifact as a Pages deployment");
 
 Assert(DeploymentMarkerFiles.PrimaryFileName == "hugoer-deployment.json",

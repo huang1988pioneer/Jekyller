@@ -753,7 +753,7 @@ public sealed partial class GitHubService : IGitHubService
         }
         else if (target.Platform == GitHostingPlatform.GitLab)
         {
-            progress?.Report("加入 GitLab Pages CI 並固定相容的 Hugo 版本…");
+            progress?.Report("加入 GitLab Pages CI（Ruby / Jekyll 建置）…");
             await EnsureGitLabPagesCiAsync(projectPath, cancellationToken).ConfigureAwait(false);
             var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
             if (markerError is not null) return markerError;
@@ -865,7 +865,7 @@ public sealed partial class GitHubService : IGitHubService
         }
         else if (remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.GitLab)
         {
-            progress?.Report("更新 GitLab Pages CI 並固定相容的 Hugo 版本…");
+            progress?.Report("更新 GitLab Pages CI（Ruby / Jekyll 建置）…");
             await EnsureGitLabPagesCiAsync(projectPath, cancellationToken).ConfigureAwait(false);
             var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
             if (markerError is not null) return markerError;

@@ -5,28 +5,39 @@ public static class GitLabPagesCi
     public const string FileName = ".gitlab-ci.yml";
 
     public const string Configuration = """
-        default:
-          image: "hugomods/hugo:0.164.0"
+        image: ruby:3.3
 
         variables:
-          GIT_SUBMODULE_STRATEGY: recursive
+          JEKYLL_ENV: production
+          LC_ALL: C.UTF-8
+
+        cache:
+          paths:
+            - vendor/
+
+        before_script:
+          - bundle config set --local path 'vendor'
+          - bundle install
 
         test:
+          stage: test
           script:
-            - hugo --gc --minify
+            - bundle exec jekyll build -d test
+          artifacts:
+            paths:
+              - test
           rules:
             - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
 
-        create-pages:
+        pages:
+          stage: deploy
           script:
-            - hugo --gc --minify
-          pages: true
+            - bundle exec jekyll build -d public
           artifacts:
             paths:
               - public
           rules:
             - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-          environment: production
         """;
 
     public static string PathFor(string projectPath) => Path.Combine(projectPath, FileName);
