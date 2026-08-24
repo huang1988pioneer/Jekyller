@@ -48,6 +48,14 @@ public sealed class GitRemoteInfo
 
 public sealed class GitHubRepositoryTarget
 {
+    public GitHostingPlatform Platform { get; init; } = GitHostingPlatform.GitHub;
+    public string PlatformLabel => Platform switch
+    {
+        GitHostingPlatform.GitLab => "GitLab",
+        GitHostingPlatform.Codeberg => "Codeberg",
+        GitHostingPlatform.Bitbucket => "Bitbucket",
+        _ => "GitHub"
+    };
     public bool IsValid { get; init; }
     public string? Owner { get; init; }
     public string? Repository { get; init; }
@@ -57,4 +65,71 @@ public sealed class GitHubRepositoryTarget
     public string? JekyllBaseUrl { get; init; }
     public bool IsUserOrOrganizationSite { get; init; }
     public string ErrorMessage { get; init; } = string.Empty;
+}
+
+public enum GitHostingPlatform
+{
+    GitHub,
+    GitLab,
+    Codeberg,
+    Bitbucket
+}
+
+public sealed class GitHubRepositoryLookup
+{
+    public bool CheckSucceeded { get; init; }
+    public bool Exists { get; init; }
+    public bool CanReuse { get; init; }
+    public bool LooksLikeJekyll { get; init; }
+    public GitHubRepositoryTarget? Target { get; init; }
+    public string Message { get; init; } = string.Empty;
+
+    public static GitHubRepositoryLookup Fail(string message) => new()
+    {
+        CheckSucceeded = false,
+        Message = message
+    };
+
+    public static GitHubRepositoryLookup Missing() => new()
+    {
+        CheckSucceeded = true,
+        Exists = false
+    };
+}
+
+public sealed class GitHubPagesSiteItem
+{
+    public string Owner { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string FullName { get; init; } = string.Empty;
+    public string RepositoryUrl { get; init; } = string.Empty;
+    public string PagesUrl { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public bool IsPrivate { get; init; }
+    public bool IsUserOrOrganizationSite { get; init; }
+    public bool HasPages { get; init; }
+
+    public string KindLabel => IsUserOrOrganizationSite ? "使用者／組織網站" : "專案網站";
+    public string VisibilityLabel => IsPrivate ? "Private" : "Public";
+    public string Summary
+    {
+        get
+        {
+            var detail = string.IsNullOrWhiteSpace(Description) ? KindLabel : Description.Trim();
+            return string.IsNullOrWhiteSpace(PagesUrl) ? detail : $"{PagesUrl}  ·  {detail}";
+        }
+    }
+}
+
+public sealed class GitHubPagesSitesResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public IReadOnlyList<GitHubPagesSiteItem> Sites { get; init; } = [];
+
+    public static GitHubPagesSitesResult Fail(string message) => new()
+    {
+        Success = false,
+        Message = message
+    };
 }

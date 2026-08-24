@@ -2,105 +2,332 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Jekyller.ViewModels"
              xmlns:models="using:Jekyller.Models"
+             xmlns:ctrl="using:Jekyller.Controls"
+             xmlns:ae="using:AvaloniaEdit"
              x:Class="Jekyller.Views.ContentView"
              x:DataType="vm:ContentViewModel">
-  <Grid ColumnDefinitions="240,*,*" RowDefinitions="Auto,*" Margin="8">
-    <StackPanel Grid.ColumnSpan="3" Spacing="6" Margin="0,0,0,10">
-      <TextBlock Text="內容 Markdown" FontSize="22" FontWeight="Bold" />
-      <TextBlock Text="{Binding StatusMessage}" Opacity="0.8" />
-    </StackPanel>
 
-    <!-- File list -->
-    <Border Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Padding="10" CornerRadius="10"
-            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
-          <TextBlock Text="檔案列表" FontWeight="SemiBold" />
-          <Button Content="重新整理" Command="{Binding RefreshListCommand}" HorizontalAlignment="Stretch" />
-          <Expander Header="新增文章 (post)" IsExpanded="False">
-            <StackPanel Spacing="6" Margin="0,6,0,0">
-              <TextBox Text="{Binding NewPostTitle}" PlaceholderText="標題" />
-              <TextBox Text="{Binding NewPostCategories}" PlaceholderText="categories（逗號分隔）" />
-              <TextBox Text="{Binding NewPostTags}" PlaceholderText="tags（逗號分隔）" />
-              <Button Content="建立文章" Command="{Binding CreatePostCommand}" Classes="accent" />
+    <Grid RowDefinitions="Auto,Auto,*" Margin="24">
+        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <StackPanel Spacing="8">
+                <TextBlock Text="內容 Markdown" Classes="pageTitle"/>
+                <TextBlock Text="編輯 Jekyll 文章、頁面與 Chirpy 導覽頁。WYSIWYG 與原始碼可切換，右側即時對應預覽。Front matter 請用上方欄位，不要在正文裡改 YAML。"
+                           Classes="muted" TextWrapping="Wrap"/>
             </StackPanel>
-          </Expander>
-          <Expander Header="新增頁面 (page)" IsExpanded="False">
-            <StackPanel Spacing="6" Margin="0,6,0,0">
-              <TextBox Text="{Binding NewPageTitle}" PlaceholderText="標題" />
-              <TextBox Text="{Binding NewPageFileName}" PlaceholderText="about.md" />
-              <Button Content="建立頁面" Command="{Binding CreatePageCommand}" Classes="accent" />
-            </StackPanel>
-          </Expander>
-        </StackPanel>
-        <ListBox ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}">
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="models:ContentFile">
-              <StackPanel Margin="2">
-                <TextBlock Text="{Binding RelativePath}" TextWrapping="Wrap" FontSize="12" />
-                <TextBlock Text="{Binding Kind}" Opacity="0.6" FontSize="10" />
-              </StackPanel>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-      </DockPanel>
-    </Border>
+            <TextBlock Grid.Column="1" Text="{Binding ContentSummary}" Classes="muted"
+                       VerticalAlignment="Bottom" TextAlignment="Right" Margin="16,0,0,2"/>
+        </Grid>
 
-    <!-- Editor -->
-    <Border Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" Padding="10" CornerRadius="10"
-            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-          <Button Content="儲存" Command="{Binding SaveCommand}" Classes="accent" />
-          <CheckBox Content="顯示預覽" IsChecked="{Binding ShowPreview}" VerticalAlignment="Center" />
-          <Button Content="瀏覽器 HTML" Command="{Binding OpenHtmlPreviewCommand}" />
-          <TextBlock Text="有未儲存變更" IsVisible="{Binding IsDirty}" Foreground="#E6A23C" VerticalAlignment="Center" />
-        </StackPanel>
-        <TextBlock DockPanel.Dock="Top" Text="編輯器（含 front matter）" FontWeight="SemiBold" Margin="0,0,0,6" Opacity="0.8" />
-        <TextBox Text="{Binding EditorText}" AcceptsReturn="True" TextWrapping="Wrap"
-                 FontFamily="Consolas,Courier New,monospace"
-                 VerticalContentAlignment="Top" />
-      </DockPanel>
-    </Border>
+        <Border Grid.Row="1" Classes="card" Padding="14" Margin="0,0,0,12">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,10">
+                    <TextBlock Text="文章資料" Classes="sectionTitle"/>
+                    <TextBlock Grid.Column="1" Text="{Binding SelectedFile.RelativePath}" Classes="caption"
+                               VerticalAlignment="Center" Margin="10,0" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Grid.Column="2" Text="{Binding SelectedFile.PublicationStatusText}" Classes="muted"
+                               VerticalAlignment="Center" IsVisible="{Binding HasSelection}"/>
+                </Grid>
+                <Grid ColumnDefinitions="1.4*,1.2*,1.1*,1.1*" RowDefinitions="Auto,Auto,Auto"
+                      ColumnSpacing="10" RowSpacing="8" IsEnabled="{Binding HasSelection}">
+                    <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding FrontMatterTitle}"
+                             PlaceholderText="文章標題"/>
+                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding FrontMatterDate}"
+                             PlaceholderText="日期，例如 2026-08-23 10:00:00 +08:00"/>
+                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding FrontMatterSlug}"
+                             PlaceholderText="slug（選填，通常用檔名）"/>
+                    <CheckBox Grid.Row="0" Grid.Column="3" Content="草稿（published: false）"
+                              IsChecked="{Binding IsDraft}" VerticalAlignment="Center"/>
 
-    <!-- Markdown preview -->
-    <Border Grid.Row="1" Grid.Column="2" Padding="10" CornerRadius="10"
-            Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
-            IsVisible="{Binding ShowPreview}">
-      <DockPanel>
-        <TextBlock DockPanel.Dock="Top" Text="Markdown 預覽（已略過 front matter）"
-                   FontWeight="SemiBold" Margin="0,0,0,8" Opacity="0.8" />
-        <ScrollViewer>
-          <ItemsControl ItemsSource="{Binding PreviewBlocks}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="models:PreviewBlock">
-                <Border Margin="0,0,0,8">
-                  <Panel>
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="22" FontWeight="Bold"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=h1}" />
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="18" FontWeight="SemiBold"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=h2}" />
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="15" FontWeight="SemiBold"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=h3}" />
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13" Opacity="0.95"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=p}" />
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13" FontStyle="Italic" Opacity="0.8"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=quote}" />
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=li}" />
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12"
-                               FontFamily="Consolas,Courier New,monospace"
-                               Background="#2A2A2A" Padding="8"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=code}" />
-                    <TextBlock Text="────────" Opacity="0.4"
-                               IsVisible="{Binding Kind, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=hr}" />
-                  </Panel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </ScrollViewer>
-      </DockPanel>
-    </Border>
-  </Grid>
+                    <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding FrontMatterCategories}"
+                             PlaceholderText="分類，以逗號分隔"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FrontMatterTags}"
+                             PlaceholderText="標籤，以逗號分隔"/>
+                    <Grid Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" ColumnDefinitions="*,Auto">
+                        <TextBox Text="{Binding FrontMatterImage}"
+                                 PlaceholderText="封面，例如 /assets/img/cover.jpg"/>
+                        <Button Grid.Column="1" Content="上傳封面" Margin="8,0,0,0"
+                                Command="{Binding UploadCoverImageCommand}"
+                                ToolTip.Tip="上傳到 assets/img，並填入 image.path"/>
+                    </Grid>
+
+                    <TextBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" Text="{Binding FrontMatterDescription}"
+                             PlaceholderText="摘要／Description"/>
+                </Grid>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Row="2" ColumnDefinitions="320,*">
+            <Border Classes="card" Padding="12" Margin="0,0,12,0">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="內容列表" Classes="sectionTitle"/>
+                            <TextBlock Grid.Column="1" Text="{Binding FileCountLabel}"
+                                       Classes="caption" VerticalAlignment="Center"/>
+                        </Grid>
+                        <TextBox PlaceholderText="搜尋名稱或路徑…"
+                                 Text="{Binding Filter}"
+                                 ToolTip.Tip="輸入標題、檔名或相對路徑"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                            <ComboBox ItemsSource="{Binding StatusOptions}"
+                                      SelectedItem="{Binding StatusFilter}"
+                                      ToolTip.Tip="依發布狀態篩選文章"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding SortOptions}"
+                                      SelectedItem="{Binding SortMode}"
+                                      ToolTip.Tip="排序文章清單"/>
+                        </Grid>
+                        <TextBlock Text="快速新增文章" Classes="caption" Margin="0,3,0,0"/>
+                        <TextBox PlaceholderText="text西元年月日-編號，例如 text20260823-1"
+                                 Text="{Binding NewPostTitle}"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                            <TextBox PlaceholderText="分類，逗號分隔" Text="{Binding NewPostCategories}"/>
+                            <TextBox PlaceholderText="標籤，逗號分隔" Text="{Binding NewPostTags}"/>
+                        </Grid>
+                        <CheckBox Content="建立為草稿（_drafts）" IsChecked="{Binding NewPostIsDraft}"/>
+                        <Button Content="新增文章" Classes="accent" Command="{Binding CreatePostCommand}"
+                                HorizontalAlignment="Stretch"/>
+                        <TextBlock Text="新增頁面" Classes="caption" Margin="0,4,0,0"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                            <TextBox PlaceholderText="頁面標題" Text="{Binding NewPageTitle}"/>
+                            <TextBox PlaceholderText="about.md" Text="{Binding NewPageFileName}"/>
+                        </Grid>
+                        <Button Content="新增頁面" Command="{Binding CreatePageCommand}"
+                                HorizontalAlignment="Stretch"/>
+                        <TextBlock Text="Chirpy 導覽頁（_tabs）" Classes="caption" Margin="0,4,0,0"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                            <TextBox PlaceholderText="導覽標題" Text="{Binding NewTabTitle}"/>
+                            <TextBox PlaceholderText="fas fa-info-circle" Text="{Binding NewTabIcon}"/>
+                        </Grid>
+                        <Button Content="新增導覽頁" Command="{Binding CreateTabCommand}"
+                                HorizontalAlignment="Stretch"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Button Content="重新整理" Command="{Binding RefreshCommand}"/>
+                            <Button Content="清除條件" Command="{Binding ClearFiltersCommand}"
+                                    IsVisible="{Binding HasActiveFilters}"/>
+                            <Button Content="刪除" Command="{Binding DeleteSelectedCommand}"
+                                    IsEnabled="{Binding HasSelection}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <Grid>
+                        <ListBox ItemsSource="{Binding Files}"
+                                 SelectedItem="{Binding SelectedFile}"
+                                 IsVisible="{Binding HasVisibleFiles}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:ContentFile">
+                                    <Grid Margin="2,5" RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                        <Border Grid.Column="1" Classes="pill" Padding="7,2"
+                                                Background="#563E20" IsVisible="{Binding IsDraft}">
+                                            <TextBlock Text="草稿" FontSize="11" Foreground="#F4C77B"/>
+                                        </Border>
+                                        <Border Grid.Column="1" Classes="pill" Padding="7,2"
+                                                Background="#123D49" IsVisible="{Binding IsPublished}">
+                                            <TextBlock Text="已發布" FontSize="11" Foreground="#7CDAF9"/>
+                                        </Border>
+                                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding RelativePath}"
+                                                   Classes="caption" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+                                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding TimelineText}"
+                                                   Classes="caption" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <StackPanel IsVisible="{Binding ShowEmptyState}" VerticalAlignment="Center"
+                                    HorizontalAlignment="Center" Spacing="6" Margin="18">
+                            <TextBlock Text="{Binding EmptyStateTitle}" FontWeight="SemiBold"
+                                       TextAlignment="Center"/>
+                            <TextBlock Text="{Binding EmptyStateDescription}" Classes="caption"
+                                       TextAlignment="Center" TextWrapping="Wrap" MaxWidth="230"/>
+                            <Button Content="清除搜尋與篩選" Command="{Binding ClearFiltersCommand}"
+                                    IsVisible="{Binding HasActiveFilters}" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+                </DockPanel>
+            </Border>
+
+            <Grid Grid.Column="1" RowDefinitions="*,Auto">
+                <Grid x:Name="EditorPreviewGrid" ColumnDefinitions="*,Auto,*">
+                    <!-- Editor -->
+                    <Border x:Name="EditorCard" Classes="card" Padding="0" Margin="0,0,6,0">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" Padding="10,8" Background="#121820"
+                                    BorderBrush="#2A3648" BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                    <TextBlock Text="{Binding EditorModeTitle}" Classes="sectionTitle"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding SelectedFile.RelativePath}"
+                                               Classes="caption" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10"
+                                                VerticalAlignment="Center" HorizontalAlignment="Right">
+                                        <Button Classes="toolBtn" Content="換行" Click="ToggleWrap_OnClick"
+                                                ToolTip.Tip="切換自動換行"
+                                                IsVisible="{Binding IsSourceMode}"/>
+                                        <TextBlock Text="{Binding EditorStatistics}" Classes="caption"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                            <Border DockPanel.Dock="Top" Padding="7,5" Background="#0F151D"
+                                    BorderBrush="#2A3648" BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="*,Auto">
+                                <WrapPanel Orientation="Horizontal">
+                                    <Border Classes="toolGroup">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn" Content="↶" Click="Undo_OnClick" ToolTip.Tip="復原（Ctrl+Z）"/>
+                                            <Button Classes="toolBtn" Content="↷" Click="Redo_OnClick" ToolTip.Tip="重做（Ctrl+Y）"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="toolGroup">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn accentGlyph" Click="Heading1_OnClick" ToolTip.Tip="一級標題"><TextBlock Text="H1"/></Button>
+                                            <Button Classes="toolBtn accentGlyph" Click="Heading2_OnClick" ToolTip.Tip="二級標題"><TextBlock Text="H2"/></Button>
+                                            <Button Classes="toolBtn accentGlyph" Click="Heading3_OnClick" ToolTip.Tip="三級標題"><TextBlock Text="H3"/></Button>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="toolGroup">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn" Click="Bold_OnClick" ToolTip.Tip="粗體（Ctrl+B）">
+                                                <TextBlock Text="B" FontWeight="Bold"/></Button>
+                                            <Button Classes="toolBtn" Click="Italic_OnClick" ToolTip.Tip="斜體（Ctrl+I）">
+                                                <TextBlock Text="I" FontStyle="Italic" FontFamily="Georgia"/></Button>
+                                            <Button Classes="toolBtn" Click="Strike_OnClick" ToolTip.Tip="刪除線">
+                                                <TextBlock Text="S" TextDecorations="Strikethrough"/></Button>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="toolGroup">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn" Click="InlineCode_OnClick" ToolTip.Tip="行內程式碼">
+                                                <TextBlock Text="&lt;/&gt;" FontFamily="Cascadia Mono, Consolas" FontSize="11.5"/></Button>
+                                            <Button Classes="toolBtn" Click="CodeBlock_OnClick" ToolTip.Tip="程式碼區塊">
+                                                <TextBlock Text="{}{ }" FontFamily="Cascadia Mono, Consolas" FontSize="11.5"/></Button>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="toolGroup">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn" Content="連結" Click="Link_OnClick" ToolTip.Tip="插入連結（Ctrl+K）"/>
+                                            <Button Classes="toolBtn" Content="圖片" Click="Image_OnClick" ToolTip.Tip="上傳到 assets/img 並插入"/>
+                                            <Button Classes="toolBtn" Content="音樂" Click="Music_OnClick" ToolTip.Tip="上傳到 assets/audio 並插入"/>
+                                            <Button Classes="toolBtn" Content="語音" Click="Voice_OnClick" ToolTip.Tip="上傳到 assets/audio 並插入"/>
+                                            <Button Classes="toolBtn" Content="影片" Click="Video_OnClick" ToolTip.Tip="上傳到 assets/video 並插入"/>
+                                            <Button Classes="toolBtn" Content="PDF" Click="Pdf_OnClick" ToolTip.Tip="上傳到 assets/pdf 並插入"/>
+                                            <Button Classes="toolBtn" Content="其他" Click="OtherFile_OnClick" ToolTip.Tip="依副檔名上傳到 assets 對應資料夾"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="toolGroup">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn" Content="引用" Click="Quote_OnClick" ToolTip.Tip="引用段落"/>
+                                            <Button Classes="toolBtn" Click="BulletList_OnClick" ToolTip.Tip="項目符號清單">
+                                                <StackPanel Orientation="Horizontal" Spacing="3">
+                                                    <TextBlock Text="•"/><TextBlock Text="清單"/></StackPanel>
+                                            </Button>
+                                            <Button Classes="toolBtn" Content="編號" Click="OrderedList_OnClick" ToolTip.Tip="編號清單"/>
+                                            <Button Classes="toolBtn" Content="待辦" Click="TaskList_OnClick" ToolTip.Tip="工作清單"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="toolGroup" Margin="0,0,0,5">
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Classes="toolBtn" Content="表格" Click="Table_OnClick" ToolTip.Tip="插入表格"/>
+                                            <Button Classes="toolBtn" Click="HorizontalRule_OnClick" ToolTip.Tip="分隔線">
+                                                <TextBlock Text="—" FontWeight="Bold"/></Button>
+                                        </StackPanel>
+                                    </Border>
+                                </WrapPanel>
+                                <Border Grid.Column="1" Classes="modeToggle" VerticalAlignment="Center"
+                                        Margin="8,0,2,5">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Classes="modeBtn" Content="WYSIWYG"
+                                                Classes.selected="{Binding IsWysiwygMode}"
+                                                Command="{Binding SetWysiwygModeCommand}"
+                                                ToolTip.Tip="所見即所得。切換後右側顯示對應的 Markdown 輸出（參考 CKEditor 5）"/>
+                                        <Button Classes="modeBtn" Content="原始碼"
+                                                Classes.selected="{Binding IsSourceMode}"
+                                                Command="{Binding SetSourceModeCommand}"
+                                                ToolTip.Tip="編輯 Markdown 原文。切換後右側顯示對應的渲染預覽（參考 CKEditor 5 Source）"/>
+                                    </StackPanel>
+                                </Border>
+                                </Grid>
+                            </Border>
+                            <Panel>
+                                <ae:TextEditor x:Name="MarkdownEditor"
+                                               Classes="markdownEditor"
+                                               ShowLineNumbers="True"
+                                               WordWrap="True"
+                                               HorizontalScrollBarVisibility="Disabled"
+                                               IsVisible="{Binding IsSourceMode}"
+                                               IsHitTestVisible="{Binding IsSourceMode}"/>
+                                <ctrl:MarkdownWysiwygEditor x:Name="WysiwygEditor"
+                                                            SitePath="{Binding ProjectPath}"
+                                                            IsVisible="{Binding IsWysiwygMode}"
+                                                            IsHitTestVisible="{Binding IsWysiwygMode}"/>
+                            </Panel>
+                        </DockPanel>
+                    </Border>
+
+                    <GridSplitter Grid.Column="1" Width="4" Margin="2,0"
+                                  Background="#2A3648"
+                                  IsVisible="{Binding ShowPreview}"
+                                  IsEnabled="{Binding ShowPreview}"/>
+
+                    <!-- Corresponding preview: render or Markdown output -->
+                    <Border Grid.Column="2" Classes="card" Padding="0" Margin="6,0,0,0"
+                            IsVisible="{Binding ShowPreview}">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" Padding="10,8" Background="#121820"
+                                    BorderBrush="#2A3648" BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                    <TextBlock Text="{Binding PreviewKindTitle}" Classes="sectionTitle"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding PreviewCorrespondenceHint}"
+                                               Classes="caption" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <Border Grid.Column="2" Classes="modeToggle" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Classes="modeBtn" Content="渲染"
+                                                    Classes.selected="{Binding IsRenderPreview}"
+                                                    Command="{Binding SetRenderPreviewCommand}"
+                                                    ToolTip.Tip="Markdig 渲染預覽，對應目前正文"/>
+                                            <Button Classes="modeBtn" Content="Markdown"
+                                                    Classes.selected="{Binding IsMarkdownOutputPreview}"
+                                                    Command="{Binding SetMarkdownOutputPreviewCommand}"
+                                                    ToolTip.Tip="對應的 Markdown 原文輸出，參考 CKEditor 5 Markdown output"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                            <Panel>
+                                <ctrl:MarkdownPreviewControl Markdown="{Binding PreviewMarkdown}"
+                                                             SitePath="{Binding ProjectPath}"
+                                                             IsVisible="{Binding IsRenderPreview}"/>
+                                <Grid IsVisible="{Binding IsMarkdownOutputPreview}">
+                                    <TextBox Classes="markdownOutput"
+                                             Text="{Binding PreviewBodyMarkdown, Mode=OneWay}"
+                                             IsReadOnly="True"
+                                             IsVisible="{Binding HasPreviewBody}"/>
+                                    <TextBlock Text="開始編輯後，這裡會顯示與 WYSIWYG 對應的 Markdown 原文。"
+                                               Classes="muted" FontStyle="Italic"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="Wrap" MaxWidth="280"
+                                               IsVisible="{Binding !HasPreviewBody}"/>
+                                </Grid>
+                            </Panel>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                    <Button Content="儲存" Classes="accent" Click="Save_OnClick"/>
+                    <TextBlock Text="10 秒未編輯會自動儲存" Classes="caption" VerticalAlignment="Center"/>
+                    <Button Content="{Binding PreviewModeLabel}" Command="{Binding TogglePreviewCommand}"/>
+                    <Button Content="瀏覽器 HTML 預覽" Command="{Binding OpenHtmlPreviewCommand}"/>
+                    <TextBlock Text="{Binding StatusMessage}" Classes="muted" VerticalAlignment="Center"/>
+                    <TextBlock Text="● 未儲存" Foreground="#E6A23C" VerticalAlignment="Center"
+                               IsVisible="{Binding IsDirty}"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
 </UserControl>

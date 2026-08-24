@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Jekyller.Helpers;
 using Jekyller.Models;
 
 namespace Jekyller.Services;
@@ -11,6 +12,15 @@ public interface IGitHubService
     Task<GitRemoteInfo> GetInfoAsync(string projectPath, CancellationToken cancellationToken = default);
     Task<(bool HasAccess, string Message)> CheckPushAccessAsync(
         GitHubRepositoryTarget target,
+        CancellationToken cancellationToken = default);
+    Task<GitHubRepositoryLookup> LookupOwnedRepositoryAsync(
+        string repoName,
+        CancellationToken cancellationToken = default);
+    Task<GitHubPagesSitesResult> ListPagesSitesAsync(CancellationToken cancellationToken = default);
+    Task<ProcessResult> CloneRepositoryAsync(
+        GitHubRepositoryTarget target,
+        string destinationPath,
+        IProgress<string>? progress = null,
         CancellationToken cancellationToken = default);
     Task UpdateSiteUrlsAsync(
         string projectPath,
@@ -76,50 +86,68 @@ public sealed partial class GitHubService : IGitHubService
     {
         var value = input?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(value))
-            return InvalidTarget("請貼上 GitHub repository 網址。");
+            return InvalidTarget("請貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。");
 
-        var ssh = GitHubSshRemoteRegex().Match(value);
+        var ssh = GitSshRemoteRegex().Match(value);
         if (ssh.Success)
         {
-            value = $"https://github.com/{ssh.Groups["owner"].Value}/{ssh.Groups["repo"].Value}";
+            value = $"https://{ssh.Groups["host"].Value}/{ssh.Groups["path"].Value}";
         }
         else if (!value.Contains("://", StringComparison.Ordinal))
         {
-            value = value.StartsWith("github.com/", StringComparison.OrdinalIgnoreCase)
-                ? $"https://{value}"
-                : $"https://github.com/{value.TrimStart('/')}";
+            if (value.Contains(".github.io", StringComparison.OrdinalIgnoreCase))
+                value = $"https://{value.TrimStart('/')}";
+            else
+                value = SupportedHosts.Any(host => value.StartsWith(host + "/", StringComparison.OrdinalIgnoreCase))
+                    ? $"https://{value}"
+                    : $"https://github.com/{value.TrimStart('/')}";
         }
 
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
-            || !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+            || (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)))
         {
-            return InvalidTarget("僅支援 https://github.com/owner/repository 網址。");
+            return InvalidTarget(UnsupportedRepositoryUrlMessage);
         }
 
+        if (uri.Host.EndsWith(".github.io", StringComparison.OrdinalIgnoreCase))
+        {
+            var converted = GitHubPagesUrl.TryConvertToRepositoryUrl(uri);
+            return converted is null
+                ? InvalidTarget(UnsupportedRepositoryUrlMessage)
+                : ParseRepositoryTarget(converted);
+        }
+
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            return InvalidTarget(UnsupportedRepositoryUrlMessage);
+
+        var platform = PlatformFromHost(uri.Host);
+        if (platform is null)
+            return InvalidTarget(UnsupportedRepositoryUrlMessage);
+
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (segments.Length != 2)
+        if (segments.Length < 2)
             return InvalidTarget("網址必須指向 repository 首頁，不可包含 issues、settings 等子路徑。");
 
-        var owner = Uri.UnescapeDataString(segments[0]);
-        var repository = Uri.UnescapeDataString(segments[1]);
+        var owner = string.Join('/', segments[..^1].Select(Uri.UnescapeDataString));
+        var repository = Uri.UnescapeDataString(segments[^1]);
         if (repository.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
             repository = repository[..^4];
 
-        if (!GitHubOwnerRegex().IsMatch(owner) || !GitHubRepositoryRegex().IsMatch(repository))
-            return InvalidTarget("GitHub owner 或 repository 名稱格式無效。");
+        if (!RepositoryOwnerRegex().IsMatch(owner) || !GitHubRepositoryRegex().IsMatch(repository))
+            return InvalidTarget("Repository owner／namespace 或名稱格式無效。");
 
-        var userSite = repository.Equals($"{owner}.github.io", StringComparison.OrdinalIgnoreCase);
-        var host = $"https://{owner.ToLowerInvariant()}.github.io";
+        var (pagesUrl, jekyllUrl, baseUrl, userSite) = GetSuggestedSiteUrls(platform.Value, owner, repository);
         return new GitHubRepositoryTarget
         {
+            Platform = platform.Value,
             IsValid = true,
             Owner = owner,
             Repository = repository,
-            CanonicalUrl = $"https://github.com/{owner}/{repository}.git",
-            PagesUrl = userSite ? $"{host}/" : $"{host}/{repository}/",
-            JekyllUrl = host,
-            JekyllBaseUrl = userSite ? string.Empty : $"/{repository}",
+            CanonicalUrl = $"https://{uri.Host}/{owner}/{repository}.git",
+            PagesUrl = pagesUrl,
+            JekyllUrl = jekyllUrl,
+            JekyllBaseUrl = baseUrl,
             IsUserOrOrganizationSite = userSite
         };
     }
@@ -154,7 +182,7 @@ public sealed partial class GitHubService : IGitHubService
         if (remote.Success)
         {
             data.RemoteUrl = remote.StdOut.Trim();
-            var (owner, repo) = ParseGitHubRemote(data.RemoteUrl);
+            var (owner, repo) = ParseRepositoryRemote(data.RemoteUrl);
             data.Owner = owner;
             data.Repo = repo;
         }
@@ -181,6 +209,12 @@ public sealed partial class GitHubService : IGitHubService
         if (!target.IsValid || string.IsNullOrWhiteSpace(target.Owner) || string.IsNullOrWhiteSpace(target.Repository))
             return (false, target.ErrorMessage);
 
+        if (target.Platform != GitHostingPlatform.GitHub)
+        {
+            return (true,
+                $"{target.PlatformLabel} 將使用 Git 本機憑證驗證；實際推送時若沒有權限會安全停止。");
+        }
+
         var result = await _processRunner.RunAsync(
             "gh",
             $"api repos/{target.Owner}/{target.Repository} --jq .permissions.push",
@@ -196,6 +230,196 @@ public sealed partial class GitHubService : IGitHubService
         return canPush
             ? (true, $"已確認具有 {target.Owner}/{target.Repository} 的推送權限。")
             : (false, $"目前 GitHub 登入帳號沒有 {target.Owner}/{target.Repository} 的推送權限。請由 owner 加入 collaborator，或改用有權限的帳號執行 gh auth login。");
+    }
+
+    public async Task<GitHubRepositoryLookup> LookupOwnedRepositoryAsync(
+        string repoName,
+        CancellationToken cancellationToken = default)
+    {
+        var name = repoName.Trim();
+        if (!GitHubRepositoryRegex().IsMatch(name))
+            return GitHubRepositoryLookup.Fail("Repository 名稱格式無效。");
+
+        var user = await _processRunner.RunAsync(
+            "gh", "api user --jq .login", timeoutMs: 15_000, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        if (!user.Success || string.IsNullOrWhiteSpace(user.StdOut))
+            return GitHubRepositoryLookup.Fail("無法取得目前 GitHub 帳號。請先執行 gh auth login。");
+
+        var owner = user.StdOut.Trim();
+        var target = ParseRepositoryTarget($"https://github.com/{owner}/{name}");
+        if (!target.IsValid)
+            return GitHubRepositoryLookup.Fail(target.ErrorMessage);
+
+        var meta = await _processRunner.RunAsync(
+            "gh",
+            $"api repos/{owner}/{name}",
+            timeoutMs: 30_000,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!meta.Success)
+        {
+            return IsNotFound(meta)
+                ? GitHubRepositoryLookup.Missing()
+                : GitHubRepositoryLookup.Fail(
+                    $"無法確認 GitHub 上是否已有 {owner}/{name}。\n{meta.CombinedOutput}");
+        }
+
+        var contents = await _processRunner.RunAsync(
+            "gh",
+            $"api repos/{owner}/{name}/contents",
+            timeoutMs: 30_000,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        IReadOnlyList<string> names;
+        if (!contents.Success)
+        {
+            if (IsEmptyRepository(contents) || IsNotFound(contents))
+                names = [];
+            else
+                return GitHubRepositoryLookup.Fail(
+                    $"無法讀取 {owner}/{name} 的檔案清單。\n{contents.CombinedOutput}");
+        }
+        else
+        {
+            names = ParseRepositoryContentNames(contents.StdOut);
+        }
+
+        var looksLikeJekyll = GitHubRepositoryClassifier.LooksLikeJekyll(names);
+        var canReuse = GitHubRepositoryClassifier.CanReuseExisting(names);
+        var message = looksLikeJekyll
+            ? $"GitHub 上已有 Jekyll repository {owner}/{name}，改用安全連結流程（會保留遠端內容，衝突時停止，不會 force push）。"
+            : canReuse
+                ? $"GitHub 上已有 {owner}/{name}（空的或僅有 README 等初始檔），改用安全連結流程。"
+                : $"GitHub 上已有同名 repository {owner}/{name}，但看起來不是 Jekyll 網站。請改用其他名稱，或到上方「連結既有 GitHub Repository」貼上網址確認後再連。";
+
+        return new GitHubRepositoryLookup
+        {
+            CheckSucceeded = true,
+            Exists = true,
+            CanReuse = canReuse,
+            LooksLikeJekyll = looksLikeJekyll,
+            Target = target,
+            Message = message
+        };
+    }
+
+    public async Task<GitHubPagesSitesResult> ListPagesSitesAsync(CancellationToken cancellationToken = default)
+    {
+        var user = await _processRunner.RunAsync(
+            "gh", "api user --jq .login", timeoutMs: 15_000, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        if (!user.Success || string.IsNullOrWhiteSpace(user.StdOut))
+            return GitHubPagesSitesResult.Fail("無法取得目前 GitHub 帳號。請先執行 GitHub 登入 (gh auth login)。");
+
+        var login = user.StdOut.Trim();
+        var args = "api --paginate --slurp \"user/repos?per_page=100&sort=updated&affiliation=owner,collaborator\"";
+        var result = await _processRunner.RunAsync(
+            "gh", args, timeoutMs: 90_000, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!result.Success && ContainsAny(result.CombinedOutput, "unknown flag", "unknown command"))
+        {
+            result = await _processRunner.RunAsync(
+                "gh",
+                "api --paginate \"user/repos?per_page=100&sort=updated&affiliation=owner,collaborator\"",
+                timeoutMs: 90_000,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!result.Success)
+        {
+            return GitHubPagesSitesResult.Fail(
+                $"無法列出 GitHub Pages 網站。請確認 gh 已登入。\n{result.CombinedOutput}");
+        }
+
+        var sites = GitHubPagesSiteParser.Parse(result.StdOut, login);
+        return new GitHubPagesSitesResult
+        {
+            Success = true,
+            Sites = sites,
+            Message = sites.Count == 0
+                ? "沒有找到已啟用 GitHub Pages 的 repository。也可以直接貼上 repository 或 Pages 網址複製。"
+                : $"找到 {sites.Count} 個 GitHub Pages 網站。"
+        };
+    }
+
+    public async Task<ProcessResult> CloneRepositoryAsync(
+        GitHubRepositoryTarget target,
+        string destinationPath,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!target.IsValid || string.IsNullOrWhiteSpace(target.Owner) || string.IsNullOrWhiteSpace(target.Repository))
+            return new ProcessResult { ExitCode = -1, StdErr = target.ErrorMessage };
+
+        string dest;
+        try
+        {
+            dest = Path.GetFullPath(destinationPath);
+        }
+        catch (Exception ex)
+        {
+            return new ProcessResult { ExitCode = -1, StdErr = $"本機路徑無效：{ex.Message}" };
+        }
+
+        if (dest.Contains('"'))
+            return new ProcessResult { ExitCode = -1, StdErr = "本機路徑不可包含引號。" };
+
+        if (!GitHubCloneDestination.IsVacant(dest))
+        {
+            return new ProcessResult
+            {
+                ExitCode = -1,
+                StdErr = $"目標資料夾不是空的：{dest}。請換一個資料夾名稱，以免覆蓋現有檔案。"
+            };
+        }
+
+        var parent = Path.GetDirectoryName(dest);
+        if (string.IsNullOrWhiteSpace(parent))
+            return new ProcessResult { ExitCode = -1, StdErr = "本機路徑無效。" };
+
+        Directory.CreateDirectory(parent);
+
+        var ghOk = target.Platform == GitHostingPlatform.GitHub
+            && await IsGhAvailableAsync(cancellationToken).ConfigureAwait(false);
+        ProcessResult clone;
+        if (ghOk)
+        {
+            progress?.Report($"正在複製 {target.Owner}/{target.Repository}…");
+            clone = await _processRunner.RunAsync(
+                "gh",
+                $"repo clone \"{target.Owner}/{target.Repository}\" \"{dest}\"",
+                parent,
+                progress,
+                cancellationToken,
+                timeoutMs: 300_000).ConfigureAwait(false);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(target.CanonicalUrl))
+                return new ProcessResult { ExitCode = -1, StdErr = "找不到可複製的 repository 網址。" };
+
+            progress?.Report($"正在 git clone {target.Owner}/{target.Repository}…");
+            clone = await _processRunner.RunAsync(
+                "git",
+                $"clone \"{target.CanonicalUrl}\" \"{dest}\"",
+                parent,
+                progress,
+                cancellationToken,
+                timeoutMs: 300_000).ConfigureAwait(false);
+        }
+
+        if (clone.Success)
+        {
+            return new ProcessResult
+            {
+                ExitCode = 0,
+                StdOut = $"已複製 {target.Owner}/{target.Repository} 到 {dest}"
+            };
+        }
+
+        TryDeleteIncompleteClone(dest);
+        return clone;
     }
 
     public Task UpdateSiteUrlsAsync(
@@ -288,7 +512,35 @@ public sealed partial class GitHubService : IGitHubService
             "git", "remote get-url origin", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
-        if (!remote.Success)
+        if (remote.Success)
+        {
+            var (owner, repo) = ParseGitHubRemote(remote.StdOut.Trim());
+            if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
+            {
+                return new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdErr = $"本機 origin 已指向 {remote.StdOut.Trim()}，不是 GitHub repository。Jekyller 沒有修改 origin，也沒有建立新 repository。"
+                };
+            }
+
+            if (!repo.Equals(repoName, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdErr = $"本機 origin 已指向 {owner}/{repo}，與要建立的「{repoName}」不同。Jekyller 沒有修改 origin，也沒有建立新 repository。"
+                };
+            }
+
+            progress?.Report("本機已有 origin，推送到既有 repository…");
+            var push = await _processRunner.RunAsync(
+                "git", "push -u origin HEAD", projectPath, progress, cancellationToken, timeoutMs: 180_000)
+                .ConfigureAwait(false);
+            if (!push.Success)
+                return push;
+        }
+        else
         {
             var create = await _processRunner.RunAsync(
                 "gh",
@@ -299,16 +551,26 @@ public sealed partial class GitHubService : IGitHubService
                 timeoutMs: 180_000).ConfigureAwait(false);
 
             if (!create.Success)
-                return create;
-        }
-        else
-        {
-            progress?.Report("推送到 origin…");
-            var push = await _processRunner.RunAsync(
-                "git", "push -u origin HEAD", projectPath, progress, cancellationToken, timeoutMs: 180_000)
-                .ConfigureAwait(false);
-            if (!push.Success)
-                return push;
+            {
+                if (!LooksLikeNameExistsError(create))
+                    return create;
+
+                var info = await GetInfoAsync(projectPath, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(info.GhUser))
+                    return create;
+
+                var target = ParseRepositoryTarget($"https://github.com/{info.GhUser}/{repoName}");
+                if (!target.IsValid)
+                    return create;
+
+                progress?.Report($"GitHub 上已有 {info.GhUser}/{repoName}，改為安全連結既有 repository…");
+                return await ConnectExistingRepositoryAndPushAsync(
+                    projectPath,
+                    target,
+                    "Publish site via Jekyller",
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
 
         progress?.Report("啟用 GitHub Pages（GitHub Actions）…");
@@ -353,11 +615,11 @@ public sealed partial class GitHubService : IGitHubService
             .ConfigureAwait(false);
         if (remote.Success)
         {
-            var (existingOwner, existingRepository) = ParseGitHubRemote(remote.StdOut.Trim());
-            if (string.IsNullOrWhiteSpace(existingOwner)
-                || string.IsNullOrWhiteSpace(existingRepository)
-                || !existingOwner.Equals(target.Owner, StringComparison.OrdinalIgnoreCase)
-                || !existingRepository.Equals(target.Repository, StringComparison.OrdinalIgnoreCase))
+            var existingTarget = ParseRepositoryTarget(remote.StdOut.Trim());
+            if (!existingTarget.IsValid
+                || existingTarget.Platform != target.Platform
+                || !string.Equals(existingTarget.Owner, target.Owner, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(existingTarget.Repository, target.Repository, StringComparison.OrdinalIgnoreCase))
             {
                 return new ProcessResult
                 {
@@ -439,14 +701,21 @@ public sealed partial class GitHubService : IGitHubService
             }
         }
 
-        progress?.Report("加入 GitHub Actions workflow 並提交網站…");
-        var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
-        progress?.Report(workflowMessage);
-        var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
-            .ConfigureAwait(false);
-        if (platformError is not null) return platformError;
-        var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
-        if (markerError is not null) return markerError;
+        if (target.Platform == GitHostingPlatform.GitHub)
+        {
+            progress?.Report("加入 GitHub Actions workflow 並提交網站…");
+            var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
+            progress?.Report(workflowMessage);
+            var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (platformError is not null) return platformError;
+            var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
+            if (markerError is not null) return markerError;
+        }
+        else
+        {
+            progress?.Report($"提交網站到 {target.PlatformLabel}（不加入 GitHub Actions workflow）…");
+        }
         var commit = await CommitAllAsync(projectPath, commitMessage, progress, cancellationToken).ConfigureAwait(false);
         if (!commit.Success) return commit;
 
@@ -460,12 +729,21 @@ public sealed partial class GitHubService : IGitHubService
             timeoutMs: 180_000).ConfigureAwait(false);
         if (!push.Success) return push;
 
-        progress?.Report("啟用 GitHub Pages（Actions）…");
-        return await EnablePagesFromActionsAsync(
-            projectPath,
-            progress,
-            cancellationToken,
-            allowManualSetupIfPushCompleted: true).ConfigureAwait(false);
+        if (target.Platform == GitHostingPlatform.GitHub)
+        {
+            progress?.Report("啟用 GitHub Pages（Actions）…");
+            return await EnablePagesFromActionsAsync(
+                projectPath,
+                progress,
+                cancellationToken,
+                allowManualSetupIfPushCompleted: true).ConfigureAwait(false);
+        }
+
+        return new ProcessResult
+        {
+            ExitCode = 0,
+            StdOut = $"已安全連結並推送到 {target.PlatformLabel}。靜態網站部署請依該平台的 CI／Pages 設定啟用。"
+        };
     }
 
     public async Task<ProcessResult> PushAsync(
@@ -475,13 +753,18 @@ public sealed partial class GitHubService : IGitHubService
         CancellationToken cancellationToken = default)
     {
         progress?.Report("提交變更…");
-        var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
-        progress?.Report(workflowMessage);
-        var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
-            .ConfigureAwait(false);
-        if (platformError is not null) return platformError;
-        var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
-        if (markerError is not null) return markerError;
+        var remoteUrl = await DetectRemoteAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        var remoteTarget = ParseRepositoryTarget(remoteUrl);
+        if (remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.GitHub)
+        {
+            var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
+            progress?.Report(workflowMessage);
+            var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (platformError is not null) return platformError;
+            var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
+            if (markerError is not null) return markerError;
+        }
         var commit = await CommitAllAsync(projectPath, commitMessage, progress, cancellationToken).ConfigureAwait(false);
         progress?.Report(commit.CombinedOutput);
         if (!commit.Success) return commit;
@@ -997,11 +1280,124 @@ public sealed partial class GitHubService : IGitHubService
         return m.Success ? (m.Groups["owner"].Value, m.Groups["repo"].Value) : (null, null);
     }
 
+    private static (string? Owner, string? Repo) ParseRepositoryRemote(string url)
+    {
+        var target = ParseRepositoryTarget(url);
+        return target.IsValid ? (target.Owner, target.Repository) : (null, null);
+    }
+
+    private static GitHostingPlatform? PlatformFromHost(string host) => host.ToLowerInvariant() switch
+    {
+        "github.com" => GitHostingPlatform.GitHub,
+        "gitlab.com" => GitHostingPlatform.GitLab,
+        "codeberg.org" => GitHostingPlatform.Codeberg,
+        "bitbucket.org" => GitHostingPlatform.Bitbucket,
+        _ => null
+    };
+
+    private static (string PagesUrl, string JekyllUrl, string BaseUrl, bool IsUserSite) GetSuggestedSiteUrls(
+        GitHostingPlatform platform,
+        string owner,
+        string repository)
+    {
+        var account = owner.Split('/')[0].ToLowerInvariant();
+        return platform switch
+        {
+            GitHostingPlatform.GitHub => BuildSiteUrls(account, repository, ".github.io"),
+            GitHostingPlatform.GitLab => BuildSiteUrls(account, repository, ".gitlab.io"),
+            GitHostingPlatform.Codeberg => BuildSiteUrls(account, repository, ".codeberg.page", "pages"),
+            _ => (string.Empty, string.Empty, string.Empty, false)
+        };
+    }
+
+    private static (string PagesUrl, string JekyllUrl, string BaseUrl, bool IsUserSite) BuildSiteUrls(
+        string account,
+        string repository,
+        string hostSuffix,
+        string? userRepositoryName = null)
+    {
+        var expectedUserRepo = userRepositoryName ?? $"{account}{hostSuffix}";
+        var userSite = repository.Equals(expectedUserRepo, StringComparison.OrdinalIgnoreCase);
+        var host = $"https://{account}{hostSuffix}";
+        return (userSite ? $"{host}/" : $"{host}/{repository}/", host, userSite ? string.Empty : $"/{repository}", userSite);
+    }
+
+    internal static List<string> ParseRepositoryContentNames(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return [];
+
+            var names = new List<string>();
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                if (element.ValueKind == JsonValueKind.String)
+                {
+                    var value = element.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                        names.Add(value);
+                    continue;
+                }
+
+                if (element.ValueKind == JsonValueKind.Object
+                    && element.TryGetProperty("name", out var name)
+                    && name.ValueKind == JsonValueKind.String)
+                {
+                    var value = name.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                        names.Add(value);
+                }
+            }
+
+            return names;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static bool IsNotFound(ProcessResult result) =>
+        ContainsAny(result.CombinedOutput, "404", "Not Found");
+
+    private static bool IsEmptyRepository(ProcessResult result) =>
+        ContainsAny(result.CombinedOutput, "This repository is empty", "Git Repository is empty");
+
+    private static bool LooksLikeNameExistsError(ProcessResult result) =>
+        ContainsAny(
+            result.CombinedOutput,
+            "Name already exists on this account",
+            "name already exists on this account",
+            "already exists on this account");
+
+    private static bool ContainsAny(string text, params string[] tokens) =>
+        tokens.Any(token => text.Contains(token, StringComparison.OrdinalIgnoreCase));
+
+    private static void TryDeleteIncompleteClone(string destinationPath)
+    {
+        try
+        {
+            if (Directory.Exists(destinationPath) && GitHubCloneDestination.IsVacant(destinationPath))
+                Directory.Delete(destinationPath, false);
+        }
+        catch
+        {
+            // Leave a partial folder for the user to inspect if cleanup fails.
+        }
+    }
+
     private static GitHubRepositoryTarget InvalidTarget(string message) => new()
     {
         IsValid = false,
         ErrorMessage = message
     };
+
+    private const string UnsupportedRepositoryUrlMessage =
+        "支援 GitHub、GitLab、Codeberg、Bitbucket repository 網址，以及 GitHub Pages 網址。";
+
+    private static readonly string[] SupportedHosts = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
 
     private const string GitHubPagesWorkflow = """
         name: Deploy Jekyll to GitHub Pages
@@ -1065,11 +1461,14 @@ public sealed partial class GitHubService : IGitHubService
     [GeneratedRegex(@"github\.com[:/](?<owner>[^/]+)/(?<repo>[^/\s]+?)(?:\.git)?/?$", RegexOptions.IgnoreCase)]
     private static partial Regex GitHubRemoteRegex();
 
-    [GeneratedRegex(@"^git@github\.com:(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$", RegexOptions.IgnoreCase)]
-    private static partial Regex GitHubSshRemoteRegex();
+    [GeneratedRegex(@"^git@(?<host>github\.com|gitlab\.com|codeberg\.org|bitbucket\.org):(?<path>[^\s]+?)(?:\.git)?/?$", RegexOptions.IgnoreCase)]
+    private static partial Regex GitSshRemoteRegex();
 
     [GeneratedRegex(@"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")]
     private static partial Regex GitHubOwnerRegex();
+
+    [GeneratedRegex(@"^[A-Za-z0-9](?:[A-Za-z0-9._-]|/(?!/)){0,199}$")]
+    private static partial Regex RepositoryOwnerRegex();
 
     [GeneratedRegex(@"^[A-Za-z0-9._-]{1,100}$")]
     private static partial Regex GitHubRepositoryRegex();

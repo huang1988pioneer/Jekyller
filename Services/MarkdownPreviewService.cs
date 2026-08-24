@@ -1,193 +1,205 @@
+using System.Text;
 using System.Text.RegularExpressions;
-using HtmlAgilityPack;
-using Jekyller.Models;
 using Markdig;
-using Markdig.Syntax;
-using Markdig.Syntax.Inlines;
 
 namespace Jekyller.Services;
 
-public interface IMarkdownPreviewService
-{
-    string ExtractBody(string? fullDocument);
-    string ToHtml(string? markdownBody);
-    IReadOnlyList<PreviewBlock> ToBlocks(string? markdownBody);
-}
-
-public sealed class MarkdownPreviewService : IMarkdownPreviewService
+public static partial class MarkdownPreviewService
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
+        .UseDefinitionLists()
+        .UseEmojiAndSmiley()
+        .UseAlertBlocks()
+        .UseDiagrams()
+        .UseMediaLinks()
+        .UseCjkFriendlyEmphasis()
+        .UseGlobalization()
         .Build();
 
-    private static readonly Regex FrontMatter = new(
-        @"^---\s*\r?\n.*?\r?\n---\s*\r?\n?",
-        RegexOptions.Singleline | RegexOptions.Compiled);
-
-    public string ExtractBody(string? fullDocument)
+    public static string StripFrontMatter(string markdown)
     {
-        if (string.IsNullOrEmpty(fullDocument))
+        if (string.IsNullOrEmpty(markdown))
             return string.Empty;
 
-        var text = fullDocument.Replace("\r\n", "\n");
-        if (text.StartsWith("---", StringComparison.Ordinal))
-        {
-            var stripped = FrontMatter.Replace(text, string.Empty, 1);
-            return stripped.TrimStart('\n');
-        }
-
-        return fullDocument;
+        var body = markdown;
+        while (FrontMatterRegex().Match(body) is { Success: true } match)
+            body = body[match.Length..].TrimStart('\r', '\n');
+        return body;
     }
 
-    public string ToHtml(string? markdownBody)
+    public static string ExtractFrontMatter(string markdown)
     {
-        var body = markdownBody ?? string.Empty;
-        var html = Markdig.Markdown.ToHtml(body, Pipeline);
-        return $$"""
-                 <!DOCTYPE html>
-                 <html>
-                 <head>
-                   <meta charset="utf-8" />
-                   <style>
-                     body { font-family: Segoe UI, system-ui, sans-serif; padding: 16px; line-height: 1.6;
-                            background: #1e1e1e; color: #e8e8e8; max-width: 900px; margin: 0 auto; }
-                     pre, code { background: #2d2d2d; border-radius: 4px; font-family: Consolas, monospace; }
-                     pre { padding: 12px; overflow: auto; }
-                     code { padding: 2px 4px; }
-                     a { color: #7aa2ff; }
-                     h1,h2,h3 { border-bottom: 1px solid #333; padding-bottom: 4px; }
-                     blockquote { border-left: 4px solid #555; margin-left: 0; padding-left: 12px; color: #bbb; }
-                     table { border-collapse: collapse; }
-                     th, td { border: 1px solid #444; padding: 6px 10px; }
-                     img { max-width: 100%; }
-                   </style>
-                 </head>
-                 <body>{{html}}</body>
-                 </html>
-                 """;
+        if (string.IsNullOrEmpty(markdown))
+            return string.Empty;
+
+        var m = FrontMatterRegex().Match(markdown);
+        return m.Success ? m.Groups["frontMatter"].Value.Trim() : string.Empty;
     }
 
-    public IReadOnlyList<PreviewBlock> ToBlocks(string? markdownBody)
+    public static string ToHtmlFragment(string markdown)
     {
-        var body = markdownBody ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(body))
-            return [];
-
-        var doc = Markdig.Markdown.Parse(body, Pipeline);
-        var blocks = new List<PreviewBlock>();
-
-        foreach (var block in doc)
-            AppendBlock(block, blocks);
-
-        if (blocks.Count == 0)
-        {
-            // Fallback: plain paragraphs
-            foreach (var line in body.Split('\n'))
-            {
-                if (!string.IsNullOrWhiteSpace(line))
-                    blocks.Add(new PreviewBlock { Kind = "p", Text = line.TrimEnd('\r') });
-            }
-        }
-
-        return blocks;
+        var bodyMd = StripFrontMatter(markdown);
+        if (string.IsNullOrWhiteSpace(bodyMd))
+            return string.Empty;
+        return Markdown.ToHtml(bodyMd, Pipeline).Trim();
     }
 
-    private static void AppendBlock(Block block, List<PreviewBlock> blocks)
+    public static string ToHtmlDocument(string markdown, string? title = null)
     {
-        switch (block)
-        {
-            case HeadingBlock h:
-                var level = Math.Clamp(h.Level, 1, 3);
-                blocks.Add(new PreviewBlock
-                {
-                    Kind = "h" + level,
-                    Text = InlineToText(h.Inline)
-                });
-                break;
-            case ParagraphBlock p:
-                blocks.Add(new PreviewBlock { Kind = "p", Text = InlineToText(p.Inline) });
-                break;
-            case CodeBlock code:
-                var lines = code is FencedCodeBlock f
-                    ? string.Join(Environment.NewLine, f.Lines.Lines.Select(l => l.ToString()).Where(s => s is not null))
-                    : code.Lines.ToString();
-                blocks.Add(new PreviewBlock { Kind = "code", Text = lines?.TrimEnd() ?? string.Empty });
-                break;
-            case QuoteBlock quote:
-                foreach (var child in quote)
-                    AppendBlock(child, blocks);
-                if (blocks.Count > 0 && blocks[^1].Kind == "p")
-                {
-                    var last = blocks[^1];
-                    blocks[^1] = new PreviewBlock { Kind = "quote", Text = last.Text };
-                }
-                break;
-            case ListBlock list:
-                foreach (var item in list)
-                {
-                    if (item is not ListItemBlock li) continue;
-                    var text = string.Join(" ", li.OfType<ParagraphBlock>().Select(pb => InlineToText(pb.Inline)));
-                    blocks.Add(new PreviewBlock { Kind = "li", Text = "• " + text });
-                }
-                break;
-            case ThematicBreakBlock:
-                blocks.Add(new PreviewBlock { Kind = "hr", Text = "—" });
-                break;
-            case HtmlBlock html:
-                blocks.Add(new PreviewBlock { Kind = "p", Text = StripHtml(html.Lines.ToString() ?? string.Empty) });
-                break;
-        }
-    }
+        var bodyMd = StripFrontMatter(markdown);
+        var bodyHtml = Markdown.ToHtml(bodyMd, Pipeline);
+        var pageTitle = string.IsNullOrWhiteSpace(title) ? "Preview" : title;
 
-    private static string InlineToText(ContainerInline? inline)
-    {
-        if (inline is null) return string.Empty;
-        var sb = new System.Text.StringBuilder();
-        foreach (var child in inline)
-        {
-            switch (child)
-            {
-                case LiteralInline lit:
-                    sb.Append(lit.Content.ToString());
-                    break;
-                case CodeInline code:
-                    sb.Append('`').Append(code.Content).Append('`');
-                    break;
-                case LineBreakInline:
-                    sb.Append(' ');
-                    break;
-                case LinkInline link:
-                    sb.Append(InlineToText(link));
-                    if (!string.IsNullOrEmpty(link.Url))
-                        sb.Append(" (").Append(link.Url).Append(')');
-                    break;
-                case EmphasisInline em:
-                    sb.Append(InlineToText(em));
-                    break;
-                case ContainerInline container:
-                    sb.Append(InlineToText(container));
-                    break;
-                default:
-                    if (child is LeafInline leaf)
-                        sb.Append(leaf.ToString());
-                    break;
-            }
-        }
-
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"zh-Hant\"><head><meta charset=\"utf-8\"/>");
+        sb.AppendLine($"<title>{System.Net.WebUtility.HtmlEncode(pageTitle)}</title>");
+        sb.AppendLine("<style>");
+        sb.AppendLine(DarkPreviewCss);
+        sb.AppendLine("</style></head><body>");
+        sb.AppendLine("<article class=\"markdown-body\">");
+        sb.AppendLine(bodyHtml);
+        sb.AppendLine("</article></body></html>");
         return sb.ToString();
     }
 
-    private static string StripHtml(string html)
+    /// <summary>
+    /// Empty WebView shell for live preview. Call <c>jekyllerSetPreview(html)</c> to replace the article.
+    /// </summary>
+    public static string PreviewShellDocument()
     {
-        try
-        {
-            var doc = new HtmlDocument();
-            doc.LoadHtml(html);
-            return HtmlEntity.DeEntitize(doc.DocumentNode.InnerText).Trim();
-        }
-        catch
-        {
-            return html;
-        }
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"zh-Hant\"><head><meta charset=\"utf-8\"/>");
+        sb.AppendLine("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https: http: file: blob:; media-src data: https: http: file: blob:;\"/>");
+        sb.AppendLine("<title>Preview</title>");
+        sb.AppendLine("<style>");
+        sb.AppendLine(DarkPreviewCss);
+        sb.AppendLine("#placeholder { display:block; color:#6b7785; font-style:italic; padding:20px 24px; }");
+        sb.AppendLine("#content { display:none; }");
+        sb.AppendLine("</style></head><body>");
+        sb.AppendLine("<p id=\"placeholder\">開始輸入 Markdown，預覽會即時更新。</p>");
+        sb.AppendLine("<article id=\"content\" class=\"markdown-body\"></article>");
+        sb.AppendLine("<script>");
+        sb.AppendLine("window.jekyllerMedia = {};");
+        sb.AppendLine("function jekyllerLookupMedia(src) {");
+        sb.AppendLine("  if (!src) return null;");
+        sb.AppendLine("  if (window.jekyllerMedia[src]) return window.jekyllerMedia[src];");
+        sb.AppendLine("  try {");
+        sb.AppendLine("    var decoded = decodeURI(src);");
+        sb.AppendLine("    if (decoded !== src && window.jekyllerMedia[decoded]) return window.jekyllerMedia[decoded];");
+        sb.AppendLine("  } catch (e) {}");
+        sb.AppendLine("  return null;");
+        sb.AppendLine("}");
+        sb.AppendLine("function jekyllerApplyMedia(root) {");
+        sb.AppendLine("  if (!root) return;");
+        sb.AppendLine("  root.querySelectorAll('img[src], audio[src], video[src], source[src]').forEach(function (el) {");
+        sb.AppendLine("    var src = el.getAttribute('src');");
+        sb.AppendLine("    if (!src || /^(data:|blob:|https?:|file:)/i.test(src)) return;");
+        sb.AppendLine("    var mapped = jekyllerLookupMedia(src);");
+        sb.AppendLine("    if (!mapped) return;");
+        sb.AppendLine("    el.setAttribute('src', mapped);");
+        sb.AppendLine("  });");
+        sb.AppendLine("}");
+        sb.AppendLine("window.jekyllerSetPreview = function (html, media) {");
+        sb.AppendLine("  if (media) {");
+        sb.AppendLine("    var keys = Object.keys(media);");
+        sb.AppendLine("    for (var i = 0; i < keys.length; i++) window.jekyllerMedia[keys[i]] = media[keys[i]];");
+        sb.AppendLine("  }");
+        sb.AppendLine("  var content = document.getElementById('content');");
+        sb.AppendLine("  var placeholder = document.getElementById('placeholder');");
+        sb.AppendLine("  var scroller = document.scrollingElement || document.documentElement;");
+        sb.AppendLine("  var top = scroller ? scroller.scrollTop : 0;");
+        sb.AppendLine("  var empty = !html;");
+        sb.AppendLine("  placeholder.style.display = empty ? 'block' : 'none';");
+        sb.AppendLine("  content.style.display = empty ? 'none' : 'block';");
+        sb.AppendLine("  var wrap = document.createElement('div');");
+        sb.AppendLine("  wrap.innerHTML = html || '';");
+        sb.AppendLine("  jekyllerApplyMedia(wrap);");
+        sb.AppendLine("  content.innerHTML = wrap.innerHTML;");
+        sb.AppendLine("  if (scroller) scroller.scrollTop = top;");
+        sb.AppendLine("};");
+        sb.AppendLine("document.addEventListener('click', function (event) {");
+        sb.AppendLine("  var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;");
+        sb.AppendLine("  if (link) event.preventDefault();");
+        sb.AppendLine("});");
+        sb.AppendLine("</script></body></html>");
+        return sb.ToString();
     }
+
+    public static string ToPlainPreviewHint(string markdown)
+    {
+        var body = StripFrontMatter(markdown).Trim();
+        if (body.Length == 0)
+            return "（空白預覽）";
+        return body.Length > 2000 ? body[..2000] + "\n…" : body;
+    }
+
+    private const string DarkPreviewCss = """
+:root { color-scheme: dark; }
+html, body {
+  margin: 0; padding: 0;
+  background: #0d1218;
+  color: #e6edf3;
+  font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+}
+.markdown-body { padding: 20px 24px 40px; max-width: 820px; }
+h1, h2, h3, h4, h5, h6 { color: #7cdaf9; margin-top: 1.4em; margin-bottom: 0.5em; font-weight: 650; }
+h1 { font-size: 1.9em; border-bottom: 1px solid #2a3648; padding-bottom: 0.25em; }
+h2 { font-size: 1.5em; border-bottom: 1px solid #243041; padding-bottom: 0.2em; }
+h3 { font-size: 1.25em; }
+p { margin: 0.75em 0; }
+a { color: #5ec8f0; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  background: #1a2330;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+pre {
+  background: #121a24;
+  border: 1px solid #2a3648;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+pre code { background: transparent; padding: 0; }
+blockquote {
+  margin: 1em 0;
+  padding: 0.4em 1em;
+  border-left: 4px solid #0e7490;
+  background: #151c26;
+  color: #c5d0dc;
+}
+.markdown-alert { margin: 1em 0; padding: 0.45em 1em; border-left: 4px solid #388bfd; background: #151c26; }
+.markdown-alert-title { margin: 0 0 0.35em; color: #7cdaf9; font-weight: 650; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+th, td { border: 1px solid #2a3648; padding: 8px 10px; }
+th { background: #1a2330; }
+img { max-width: 100%; height: auto; border-radius: 6px; }
+.markdown-body::after { content: ""; display: table; clear: both; }
+audio, video { width: 100%; max-width: 640px; margin: 1em 0; }
+hr { border: none; border-top: 1px solid #2a3648; margin: 1.5em 0; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.25em 0; }
+li > input[type="checkbox"] { margin-right: 0.45em; }
+strong { color: #fff; }
+mark { color: #fff; background: #6e5a13; padding: 0.05em 0.2em; border-radius: 3px; }
+ins { text-decoration: underline; }
+dl { margin: 1em 0; }
+dt { color: #fff; font-weight: 650; }
+dd { margin: 0.25em 0 0.75em 1.5em; }
+figure { margin: 1em 0; }
+figcaption { color: #9aa7b5; font-size: 0.9em; text-align: center; }
+.math { overflow-x: auto; }
+.mermaid { padding: 12px 14px; border: 1px solid #2a3648; border-radius: 8px; background: #121a24; }
+""";
+
+    [GeneratedRegex(@"\A(?<delimiter>---|\+\+\+)(?:\s*\r?\n(?<frontMatter>.*?)\r?\n\k<delimiter>|\s+(?<frontMatter>.*?)\s+\k<delimiter>)\s*(?:\r?\n|\z)", RegexOptions.Singleline)]
+    private static partial Regex FrontMatterRegex();
 }

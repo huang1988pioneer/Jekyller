@@ -23,24 +23,36 @@ public partial class App : Application
             var process = new ProcessRunner();
             var project = new ProjectContext();
             var dialogs = new DialogService();
+            var settings = new SettingsService();
+            settings.Load();
             var environment = new EnvironmentService(process);
             var jekyll = new JekyllService(process);
             var config = new ConfigService();
             var chirpy = new ChirpyConfigService(config);
             var themes = new ThemeService(process, config);
             var content = new ContentService();
+            var frontMatter = new FrontMatterService();
             var deploymentMonitor = new DeploymentMonitorService();
             var github = new GitHubService(process, config, deploymentMonitor);
-            var markdown = new MarkdownPreviewService();
             _serve = new JekyllServeService();
 
-            var home = new HomeViewModel(project, dialogs, jekyll);
-            var setup = new SetupViewModel(environment, jekyll, dialogs, project);
+            project.ProjectChanged += (_, _) =>
+            {
+                if (project.HasProject)
+                    settings.RememberOpenedProject(project.ProjectPath!);
+            };
+
+            var home = new HomeViewModel(project, dialogs, jekyll, settings);
+            var setup = new SetupViewModel(environment, jekyll, dialogs, project, github);
             var configVm = new ConfigViewModel(config, project, dialogs);
             var themeVm = new ThemeViewModel(themes, config, chirpy, project, dialogs);
-            var contentVm = new ContentViewModel(content, project, dialogs, markdown);
+            var contentVm = new ContentViewModel(content, project, dialogs, frontMatter, settings);
             var previewVm = new PreviewViewModel(_serve, project, dialogs);
             var githubVm = new GitHubViewModel(github, jekyll, project, dialogs, deploymentMonitor);
+
+            var autoOpenPath = settings.GetAutoOpenProjectPath();
+            if (!string.IsNullOrWhiteSpace(autoOpenPath))
+                project.SetProject(autoOpenPath);
 
             var main = new MainViewModel(project, home, setup, configVm, themeVm, contentVm, previewVm, githubVm);
 

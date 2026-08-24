@@ -12,7 +12,7 @@
     <FileVersion>1.2.5.0</FileVersion>
     <Product>Jekyller</Product>
     <Authors>Jekyller</Authors>
-    <Description>Jekyll 一站式桌面工作台 - 環境、主題、內容、GitHub Pages</Description>
+    <Description>Jekyll 一站式桌面工作台 - 環境、主題、內容、多平台 Git 與 Pages</Description>
     <ApplicationIcon>Assets\avalonia-logo.ico</ApplicationIcon>
     <!-- Single-file publish defaults (used by scripts/publish.ps1) -->
     <PublishSingleFile>true</PublishSingleFile>
@@ -42,7 +42,11 @@
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
+    <PackageReference Include="AvaloniaEdit.TextMate" Version="12.0.0" />
+    <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Avalonia.Controls.WebView" Version="12.1.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Markdig" Version="1.3.2" />
     <PackageReference Include="Velopack" Version="1.2.0" />

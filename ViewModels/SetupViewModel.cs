@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Jekyller.Helpers;
 using Jekyller.Models;
 using Jekyller.Services;
 
@@ -12,10 +13,13 @@ public partial class SetupViewModel : ViewModelBase
     private readonly IJekyllService _jekyll;
     private readonly IDialogService _dialogs;
     private readonly IProjectContext _project;
+    private readonly IGitHubService _github;
+    private string? _lastAutoCloneSiteName;
 
     public ObservableCollection<ToolStatus> Tools { get; } = [];
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
     public partial string ParentDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
     [ObservableProperty]
@@ -25,21 +29,41 @@ public partial class SetupViewModel : ViewModelBase
     public partial string Log { get; set; } = string.Empty;
 
     [ObservableProperty]
-    public partial bool IsBusy { get; set; }
+    public partial string ProjectPathDisplay { get; set; } = "尚未開啟專案";
 
     [ObservableProperty]
-    public partial string ProjectPathDisplay { get; set; } = "尚未開啟專案";
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
+    public partial string CloneRepositoryUrl { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
+    public partial string CloneSiteName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string CloneTargetSummary { get; set; } = "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
+    public partial bool IsBusy { get; set; }
+
+    public bool CanCloneNow =>
+        !IsBusy
+        && GitHubService.ParseRepositoryTarget(CloneRepositoryUrl).IsValid
+        && !string.IsNullOrWhiteSpace(ParentDirectory)
+        && !string.IsNullOrWhiteSpace(CloneSiteName);
 
     public SetupViewModel(
         IEnvironmentService environment,
         IJekyllService jekyll,
         IDialogService dialogs,
-        IProjectContext project)
+        IProjectContext project,
+        IGitHubService github)
     {
         _environment = environment;
         _jekyll = jekyll;
         _dialogs = dialogs;
         _project = project;
+        _github = github;
         _project.ProjectChanged += (_, _) =>
             ProjectPathDisplay = _project.HasProject ? _project.ProjectPath! : "尚未開啟專案";
         ProjectPathDisplay = _project.HasProject ? _project.ProjectPath! : "尚未開啟專案";
@@ -130,10 +154,89 @@ public partial class SetupViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task CloneFromGitHubAsync()
+    {
+        var target = GitHubService.ParseRepositoryTarget(CloneRepositoryUrl);
+        if (!target.IsValid)
+        {
+            await _dialogs.ShowMessageAsync("提示", target.ErrorMessage).ConfigureAwait(true);
+            return;
+        }
+
+        if (!GitHubCloneDestination.TryCreatePath(ParentDirectory, CloneSiteName, out var dest, out var pathError))
+        {
+            await _dialogs.ShowMessageAsync("無法複製", pathError).ConfigureAwait(true);
+            return;
+        }
+
+        if (!GitHubCloneDestination.IsVacant(dest))
+        {
+            await _dialogs.ShowMessageAsync(
+                "無法複製",
+                $"目標資料夾不是空的：{dest}。請換一個資料夾名稱，以免覆蓋現有檔案。").ConfigureAwait(true);
+            return;
+        }
+
+        if (_project.HasProject)
+        {
+            var ok = await _dialogs.ConfirmAsync(
+                "複製後會改開啟新資料夾",
+                $"目前已開啟本機網站：\n{_project.ProjectPath}\n\n複製完成後會改開啟：\n{dest}").ConfigureAwait(true);
+            if (!ok) return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            AppendLog($"從 {target.PlatformLabel} 複製 {target.Owner}/{target.Repository} 到 {dest}");
+            var progress = new Progress<string>(AppendLog);
+            var result = await _github.CloneRepositoryAsync(target, dest, progress).ConfigureAwait(true);
+            AppendLog(result.CombinedOutput);
+            if (!result.Success)
+            {
+                AppendLog("複製失敗。");
+                return;
+            }
+
+            if (File.Exists(Path.Combine(dest, "Gemfile")))
+            {
+                AppendLog("偵測到 Gemfile，執行 bundle install…");
+                var bundle = await _jekyll.BundleInstallAsync(dest, progress).ConfigureAwait(true);
+                AppendLog(bundle.Success ? "bundle install 完成。" : "bundle install 失敗：\n" + bundle.CombinedOutput);
+            }
+
+            if (!_jekyll.LooksLikeJekyllSite(dest))
+            {
+                AppendLog("已複製，但資料夾看起來不像 Jekyll 來源（缺少 _config.yml / Gemfile / _posts）。");
+                await _dialogs.ShowMessageAsync(
+                    "已複製，但可能不是 Jekyll 來源",
+                    "資料夾已複製到本機並開啟，但沒有找到典型的 Jekyll 檔案。若 GitHub Pages 只放了編譯後的 HTML，請改複製含 _config.yml 的來源分支。")
+                    .ConfigureAwait(true);
+            }
+
+            _project.SetProject(dest);
+            AppendLog("已開啟複製下來的專案：" + dest);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
     private async Task OpenExistingAsync()
     {
         var folder = await _dialogs.PickFolderAsync("開啟既有 Jekyll 專案").ConfigureAwait(true);
         if (folder is null) return;
+
+        if (!_jekyll.LooksLikeJekyllSite(folder))
+        {
+            var ok = await _dialogs.ConfirmAsync(
+                "看起來不像 Jekyll 專案",
+                "此資料夾未找到 _config.yml / _posts / Gemfile。仍要開啟嗎？").ConfigureAwait(true);
+            if (!ok) return;
+        }
+
         _project.SetProject(folder);
         AppendLog("已開啟專案：" + folder);
     }
@@ -182,6 +285,43 @@ public partial class SetupViewModel : ViewModelBase
         {
             IsBusy = false;
         }
+    }
+
+    partial void OnCloneRepositoryUrlChanged(string value)
+    {
+        var target = GitHubService.ParseRepositoryTarget(value);
+        if (target.IsValid && !string.IsNullOrWhiteSpace(target.Repository))
+        {
+            if (string.IsNullOrWhiteSpace(CloneSiteName) || CloneSiteName == _lastAutoCloneSiteName)
+                CloneSiteName = target.Repository;
+            _lastAutoCloneSiteName = target.Repository;
+        }
+
+        UpdateCloneTargetSummary();
+    }
+
+    partial void OnCloneSiteNameChanged(string value) => UpdateCloneTargetSummary();
+
+    partial void OnParentDirectoryChanged(string value) => UpdateCloneTargetSummary();
+
+    private void UpdateCloneTargetSummary()
+    {
+        var target = GitHubService.ParseRepositoryTarget(CloneRepositoryUrl);
+        if (!target.IsValid)
+        {
+            CloneTargetSummary = string.IsNullOrWhiteSpace(CloneRepositoryUrl)
+                ? "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。"
+                : target.ErrorMessage;
+            return;
+        }
+
+        if (!GitHubCloneDestination.TryCreatePath(ParentDirectory, CloneSiteName, out var dest, out var error))
+        {
+            CloneTargetSummary = error;
+            return;
+        }
+
+        CloneTargetSummary = $"將從 {target.PlatformLabel} 複製 {target.Owner}/{target.Repository} 到 {dest}";
     }
 
     private void AppendLog(string line)

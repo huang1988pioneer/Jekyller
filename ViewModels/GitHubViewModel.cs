@@ -1,6 +1,8 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Jekyller.Helpers;
 using Jekyller.Models;
 using Jekyller.Services;
 
@@ -18,6 +20,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     private CancellationTokenSource? _deploymentMonitorCts;
     private DeploymentVersionState? _lastDeploymentState;
     private string? _lastExpectedDeploymentId;
+    private string? _lastAutoCloneSiteName;
 
     [ObservableProperty]
     public partial string GitStatus { get; set; } = string.Empty;
@@ -41,13 +44,42 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     public partial string RepoName { get; set; } = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
     public partial string RepositoryUrl { get; set; } = string.Empty;
 
     [ObservableProperty]
-    public partial string RepositoryTargetSummary { get; set; } = "貼上既有 GitHub repository 網址後，Jekyller 會先顯示目標與 Pages 網址。";
+    public partial string RepositoryTargetSummary { get; set; } = "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
+    public partial string CloneParentDirectory { get; set; } =
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
+    public partial string CloneSiteName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string CloneTargetSummary { get; set; } = "貼上 GitHub repository 或 Pages 網址，或從下方清單選擇已上線的網站。";
+
+    [ObservableProperty]
+    public partial string PagesSitesMessage { get; set; } = "尚未開啟本機專案時，會自動列出你 GitHub 上已啟用 Pages 的網站。";
+
+    [ObservableProperty]
+    public partial bool HasPagesSites { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasLocalProject { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsGitHubRemote { get; set; }
+
+    [ObservableProperty]
+    public partial string HostingPlatformLabel { get; set; } = "Git 平台";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanConnectNow))]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
     public partial bool CanConnectRepository { get; set; }
 
     [ObservableProperty]
@@ -82,9 +114,18 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanConnectNow))]
+    [NotifyPropertyChangedFor(nameof(CanCloneNow))]
     public partial bool IsBusy { get; set; }
 
     public bool CanConnectNow => CanConnectRepository && !IsBusy;
+
+    public bool CanCloneNow =>
+        CanConnectRepository
+        && !IsBusy
+        && !string.IsNullOrWhiteSpace(CloneParentDirectory)
+        && !string.IsNullOrWhiteSpace(CloneSiteName);
+
+    public ObservableCollection<GitHubPagesSiteItem> PagesSites { get; } = [];
 
     public GitHubViewModel(
         IGitHubService github,
@@ -98,10 +139,14 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         _project = project;
         _dialogs = dialogs;
         _deploymentMonitor = deploymentMonitor;
+        HasLocalProject = _project.HasProject;
+        if (string.IsNullOrWhiteSpace(CloneParentDirectory))
+            CloneParentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _project.ProjectChanged += async (_, _) =>
         {
             _lastDeploymentState = null;
             _lastExpectedDeploymentId = null;
+            HasLocalProject = _project.HasProject;
             await RefreshAsync().ConfigureAwait(true);
             await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         };
@@ -116,17 +161,23 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (!target.IsValid)
         {
             RepositoryTargetSummary = string.IsNullOrWhiteSpace(value)
-                ? "貼上既有 GitHub repository 網址後，Jekyller 會先顯示目標與 Pages 網址。"
+                ? "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。"
                 : target.ErrorMessage;
+            UpdateCloneTargetSummary();
             return;
         }
 
         RepoName = target.Repository!;
+        if (string.IsNullOrWhiteSpace(CloneSiteName) || CloneSiteName == _lastAutoCloneSiteName)
+            CloneSiteName = target.Repository!;
+        _lastAutoCloneSiteName = target.Repository;
         RepositoryTargetSummary =
+            $"平台：{target.PlatformLabel}\n" +
             $"Repository：{target.Owner}/{target.Repository}\n" +
-            $"網站類型：{(target.IsUserOrOrganizationSite ? "使用者／組織網站" : "專案網站")}\n" +
-            $"建議 Pages 網址：{target.PagesUrl}\n" +
-            $"_config.yml：url={target.JekyllUrl}  baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}";
+            (string.IsNullOrWhiteSpace(target.PagesUrl)
+                ? "此平台不提供可自動推定的 Pages 網址；Jekyller 只處理 Git 連結與推送。"
+                : $"建議 Pages 網址：{target.PagesUrl}\n_config.yml：url={target.JekyllUrl}  baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
+        UpdateCloneTargetSummary();
     }
 
     [RelayCommand]
@@ -140,16 +191,21 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             GitStatus = gitOk ? "Git：已安裝" : "Git：未找到（請安裝 Git for Windows）";
             GhStatus = ghOk ? "GitHub CLI (gh)：已安裝" : "GitHub CLI：未找到（請安裝 gh）";
 
+            HasLocalProject = _project.HasProject;
             if (!_project.HasProject)
             {
-                RemoteSummary = "尚未開啟專案";
+                IsGitHubRemote = false;
+                HostingPlatformLabel = "Git 平台";
+                RemoteSummary = "尚未開啟本機專案。若 GitHub Pages 已有網站，可在下方複製到本機。";
                 RepoName = string.Empty;
                 PagesUrl = string.Empty;
-                PagesSummary = "尚未查詢";
+                PagesSummary = "尚未開啟本機專案";
                 DeploymentStatus = "尚未查詢";
                 DeploymentMonitorTitle = "尚未選擇網站";
-                DeploymentMonitorSummary = "請先在「環境建立」開啟或建立 Jekyll 網站。";
+                DeploymentMonitorSummary = "請先複製 GitHub Pages 網站，或到「環境建立」開啟／建立 Jekyll 網站。";
                 DeploymentMonitorSchedule = "選擇網站後開始每 5 分鐘檢查";
+                if (ghOk)
+                    await LoadPagesSitesCoreAsync().ConfigureAwait(true);
                 return;
             }
 
@@ -158,6 +214,9 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 RepoName = Path.GetFileName(site.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
             var info = await _github.GetInfoAsync(site).ConfigureAwait(true);
+            var remoteTarget = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
+            IsGitHubRemote = remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.GitHub;
+            HostingPlatformLabel = remoteTarget.IsValid ? remoteTarget.PlatformLabel : "Git 平台";
             if (string.IsNullOrWhiteSpace(RepositoryUrl) && !string.IsNullOrWhiteSpace(info.RemoteUrl))
                 RepositoryUrl = info.RemoteUrl;
             RemoteSummary =
@@ -169,6 +228,99 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
 
             await RefreshPagesStatusAsync().ConfigureAwait(true);
             await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task BrowseCloneParentAsync()
+    {
+        var folder = await _dialogs.PickFolderAsync("選擇要複製到的本機父資料夾").ConfigureAwait(true);
+        if (folder is not null)
+            CloneParentDirectory = folder;
+    }
+
+    [RelayCommand]
+    private async Task ListPagesSitesAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            await LoadPagesSitesCoreAsync().ConfigureAwait(true);
+            StatusMessage = PagesSitesMessage;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task CloneListedSiteAsync(GitHubPagesSiteItem? site)
+    {
+        if (site is null)
+            return Task.CompletedTask;
+
+        RepositoryUrl = site.RepositoryUrl;
+        CloneSiteName = site.Repository;
+        _lastAutoCloneSiteName = site.Repository;
+        return CloneFromGitHubAsync();
+    }
+
+    [RelayCommand]
+    private async Task CloneFromGitHubAsync()
+    {
+        var target = GitHubService.ParseRepositoryTarget(RepositoryUrl);
+        if (!target.IsValid)
+        {
+            StatusMessage = target.ErrorMessage;
+            return;
+        }
+
+        if (!GitHubCloneDestination.TryCreatePath(CloneParentDirectory, CloneSiteName, out var dest, out var pathError))
+        {
+            StatusMessage = pathError;
+            await _dialogs.ShowMessageAsync("無法複製", pathError).ConfigureAwait(true);
+            return;
+        }
+
+        if (!GitHubCloneDestination.IsVacant(dest))
+        {
+            StatusMessage = $"目標資料夾不是空的：{dest}。請換一個資料夾名稱，以免覆蓋現有檔案。";
+            await _dialogs.ShowMessageAsync("無法複製", StatusMessage).ConfigureAwait(true);
+            return;
+        }
+
+        if (_project.HasProject)
+        {
+            var ok = await _dialogs.ConfirmAsync(
+                "複製後會改開啟新資料夾",
+                $"目前已開啟本機網站：\n{_project.ProjectPath}\n\n複製完成後會改開啟：\n{dest}").ConfigureAwait(true);
+            if (!ok) return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            StatusMessage = $"正在複製 {target.Owner}/{target.Repository}…";
+            var progress = new Progress<string>(message =>
+            {
+                AppendLog(message);
+                StatusMessage = message;
+            });
+            var result = await _github.CloneRepositoryAsync(target, dest, progress).ConfigureAwait(true);
+            AppendLog(result.CombinedOutput);
+            if (!result.Success)
+            {
+                StatusMessage = "複製失敗；請查看操作日誌";
+                return;
+            }
+
+            await FinishLocalCloneAsync(dest, progress).ConfigureAwait(true);
+            StatusMessage = $"已複製到 {dest}，並開啟為目前專案。";
         }
         finally
         {
@@ -191,7 +343,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         try
         {
             var site = _project.ProjectPath!;
-            StatusMessage = "正在確認 GitHub repository 推送權限…";
+            StatusMessage = $"正在準備 {target.PlatformLabel} repository 連線…";
             var access = await _github.CheckPushAccessAsync(target).ConfigureAwait(true);
             AppendLog(access.Message);
             if (!access.HasAccess)
@@ -228,7 +380,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
             StatusMessage = result.Success
-                ? PushCompletedStatusMessage(result)
+                ? (target.Platform == GitHostingPlatform.GitHub ? PushCompletedStatusMessage(result) : $"已推送到 {target.PlatformLabel}")
                 : "連結或部署失敗；請查看操作日誌";
             if (!result.Success) return;
 
@@ -288,14 +440,71 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        var requestedName = RepoName.Trim();
+        var reuseExisting = false;
+        var site = _project.ProjectPath!;
         IsBusy = true;
         try
         {
-            var site = _project.ProjectPath!;
+            var info = await _github.GetInfoAsync(site).ConfigureAwait(true);
+            if (!string.IsNullOrWhiteSpace(info.Owner) && !string.IsNullOrWhiteSpace(info.Repo))
+            {
+                if (!info.Repo.Equals(requestedName, StringComparison.OrdinalIgnoreCase))
+                {
+                    StatusMessage =
+                        $"本機已連結 {info.Owner}/{info.Repo}，與要建立的「{requestedName}」不同。Jekyller 不會改指向新 repository。" +
+                        $"若這就是既有的 Jekyll 網站，請把名稱改成 {info.Repo}，或用上方「連結既有 GitHub Repository」。";
+                    AppendLog(StatusMessage);
+                    return;
+                }
+
+                RepositoryUrl = $"https://github.com/{info.Owner}/{info.Repo}";
+                AppendLog($"本機已連結 {info.Owner}/{info.Repo}，改用安全連結既有 repository 流程。");
+                reuseExisting = true;
+            }
+            else
+            {
+                StatusMessage = $"正在確認 GitHub 上是否已有 {requestedName}…";
+                var lookup = await _github.LookupOwnedRepositoryAsync(requestedName).ConfigureAwait(true);
+                if (!lookup.CheckSucceeded)
+                {
+                    StatusMessage = lookup.Message;
+                    AppendLog(lookup.Message);
+                    return;
+                }
+
+                if (lookup.Exists)
+                {
+                    AppendLog(lookup.Message);
+                    if (!lookup.CanReuse || lookup.Target is not { IsValid: true })
+                    {
+                        StatusMessage = lookup.Message;
+                        return;
+                    }
+
+                    RepositoryUrl = lookup.Target.CanonicalUrl ?? RepositoryUrl;
+                    reuseExisting = true;
+                }
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (reuseExisting)
+        {
+            await ConnectExistingRepositoryAsync().ConfigureAwait(true);
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
             var info = await _github.GetInfoAsync(site).ConfigureAwait(true);
             if (SyncRecommendedSiteUrls)
             {
-                var target = GetSiteUrlTarget(info, RepoName.Trim());
+                var target = GetSiteUrlTarget(info, requestedName);
                 if (target is not null)
                 {
                     await _github.UpdateSiteUrlsAsync(site, target).ConfigureAwait(true);
@@ -316,7 +525,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
 
             var result = await _github.CreateRepoAndPushAsync(
                 site,
-                RepoName.Trim(),
+                requestedName,
                 IsPrivate,
                 new Progress<string>(m =>
                 {
@@ -357,7 +566,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            StatusMessage = "尚未連結 GitHub repository。請先在上方貼上完整 Repository URL，再按「連結、推送並啟用 Pages」。";
+            StatusMessage = "尚未連結 repository。請先在上方貼上完整 Repository URL，再按「連結並推送」。";
             AppendLog(StatusMessage);
             return;
         }
@@ -368,7 +577,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             if (SyncRecommendedSiteUrls)
             {
                 var target = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
-                if (target.IsValid)
+                if (target.IsValid && !string.IsNullOrWhiteSpace(target.JekyllUrl))
                 {
                     await _github.UpdateSiteUrlsAsync(site, target).ConfigureAwait(true);
                     AppendLog($"已依 origin 同步 _config.yml：url={target.JekyllUrl}，baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
@@ -395,11 +604,17 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                     StatusMessage = m;
             })).ConfigureAwait(true);
             AppendLog(result.CombinedOutput);
-            StatusMessage = result.Success ? "推送完成；正在等待 Actions 部署確認" : "推送失敗";
+            var pushedTarget = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
+            StatusMessage = result.Success
+                ? (pushedTarget.Platform == GitHostingPlatform.GitHub ? "推送完成；正在等待 Actions 部署確認" : $"已推送到 {pushedTarget.PlatformLabel}")
+                : "推送失敗";
             if (!result.Success) return;
 
-            await RefreshPagesStatusAsync(updateStatusMessage: false).ConfigureAwait(true);
-            await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
+            if (pushedTarget.Platform == GitHostingPlatform.GitHub)
+            {
+                await RefreshPagesStatusAsync(updateStatusMessage: false).ConfigureAwait(true);
+                await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
+            }
         }
         finally
         {
@@ -430,6 +645,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     private async Task EnablePagesAsync()
     {
         if (!EnsureProject()) return;
+        if (!await EnsureGitHubRemoteAsync().ConfigureAwait(true)) return;
         IsBusy = true;
         try
         {
@@ -453,6 +669,19 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     private async Task RefreshPagesStatusAsync(bool updateStatusMessage = true)
     {
         if (!_project.HasProject) return;
+
+        var remote = await _github.DetectRemoteAsync(_project.ProjectPath!).ConfigureAwait(true);
+        var target = GitHubService.ParseRepositoryTarget(remote);
+        if (target.IsValid && target.Platform != GitHostingPlatform.GitHub)
+        {
+            PagesUrl = target.PagesUrl ?? string.Empty;
+            PagesSummary = string.IsNullOrWhiteSpace(target.PagesUrl)
+                ? $"{target.PlatformLabel} repository 已連結；Pages／CI 部署需在平台端設定。"
+                : $"{target.PlatformLabel} 建議網站網址：{target.PagesUrl}（部署需在平台端設定）";
+            DeploymentStatus = "非 GitHub Actions 部署";
+            if (updateStatusMessage) StatusMessage = PagesSummary;
+            return;
+        }
 
         var status = await _github.GetPagesStatusAsync(_project.ProjectPath!).ConfigureAwait(true);
         PagesUrl = status.HtmlUrl;
@@ -495,6 +724,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     private async Task AddWorkflowOnlyAsync()
     {
         if (!EnsureProject()) return;
+        if (!await EnsureGitHubRemoteAsync().ConfigureAwait(true)) return;
         var message = await _github.EnsureGitHubActionsWorkflowAsync(_project.ProjectPath!).ConfigureAwait(true);
         StatusMessage = message;
         AppendLog(message);
@@ -549,10 +779,17 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             }
 
             var site = _project.ProjectPath!;
+            var remote = await _github.DetectRemoteAsync(site, cancellationToken).ConfigureAwait(false);
+            var target = GitHubService.ParseRepositoryTarget(remote);
             if (string.IsNullOrWhiteSpace(PagesUrl))
             {
-                var pages = await _github.GetPagesStatusAsync(site, cancellationToken).ConfigureAwait(false);
-                PagesUrl = pages.HtmlUrl;
+                if (target.IsValid && target.Platform != GitHostingPlatform.GitHub)
+                    PagesUrl = target.PagesUrl ?? string.Empty;
+                else
+                {
+                    var pages = await _github.GetPagesStatusAsync(site, cancellationToken).ConfigureAwait(false);
+                    PagesUrl = pages.HtmlUrl;
+                }
             }
 
             var result = await _deploymentMonitor.CheckAsync(site, PagesUrl, cancellationToken).ConfigureAwait(false);
@@ -621,10 +858,94 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         return null;
     }
 
+    partial void OnCloneParentDirectoryChanged(string value) => UpdateCloneTargetSummary();
+
+    partial void OnCloneSiteNameChanged(string value) => UpdateCloneTargetSummary();
+
+    private async Task LoadPagesSitesCoreAsync()
+    {
+        PagesSites.Clear();
+        HasPagesSites = false;
+        PagesSitesMessage = "正在查詢 GitHub Pages 網站…";
+        var result = await _github.ListPagesSitesAsync().ConfigureAwait(true);
+        PagesSitesMessage = result.Message;
+        if (!result.Success)
+        {
+            AppendLog(result.Message);
+            return;
+        }
+
+        foreach (var site in result.Sites)
+            PagesSites.Add(site);
+
+        HasPagesSites = PagesSites.Count > 0;
+        if (HasPagesSites)
+            AppendLog($"找到 {PagesSites.Count} 個 GitHub Pages 網站。");
+    }
+
+    private async Task FinishLocalCloneAsync(string dest, IProgress<string> progress)
+    {
+        if (File.Exists(Path.Combine(dest, "Gemfile")))
+        {
+            progress.Report("偵測到 Gemfile，執行 bundle install…");
+            var bundle = await _jekyll.BundleInstallAsync(dest, progress).ConfigureAwait(true);
+            AppendLog(bundle.Success ? "bundle install 完成。" : "bundle install 失敗：\n" + bundle.CombinedOutput);
+            if (!bundle.Success)
+                progress.Report("網站已複製，但 bundle install 失敗。可稍後在「環境建立」再執行。");
+        }
+
+        if (!_jekyll.LooksLikeJekyllSite(dest))
+        {
+            AppendLog("已複製，但資料夾看起來不像 Jekyll 來源（缺少 _config.yml / Gemfile / _posts）。可能遠端是編譯後的 Pages 內容。");
+            await _dialogs.ShowMessageAsync(
+                "已複製，但可能不是 Jekyll 來源",
+                "資料夾已複製到本機並開啟，但沒有找到典型的 Jekyll 檔案。若 GitHub Pages 只放了編譯後的 HTML，請改複製含 _config.yml 的來源分支。")
+                .ConfigureAwait(true);
+        }
+
+        _project.SetProject(dest);
+    }
+
+    private void UpdateCloneTargetSummary()
+    {
+        var target = GitHubService.ParseRepositoryTarget(RepositoryUrl);
+        if (!target.IsValid)
+        {
+            CloneTargetSummary = string.IsNullOrWhiteSpace(RepositoryUrl)
+                ? "貼上 GitHub repository 或 Pages 網址，或從下方清單選擇已上線的網站。"
+                : target.ErrorMessage;
+            return;
+        }
+
+        if (!GitHubCloneDestination.TryCreatePath(CloneParentDirectory, CloneSiteName, out var dest, out var error))
+        {
+            CloneTargetSummary = error;
+            return;
+        }
+
+        CloneTargetSummary =
+            $"將複製 {target.Owner}/{target.Repository}" +
+            (string.IsNullOrWhiteSpace(target.PagesUrl) ? string.Empty : $"（{target.PagesUrl}）") +
+            $"\n到本機：{dest}";
+    }
+
     private bool EnsureProject()
     {
         if (_project.HasProject) return true;
-        _ = _dialogs.ShowMessageAsync("提示", "請先開啟或建立專案。");
+        _ = _dialogs.ShowMessageAsync("提示", "請先開啟、建立專案，或從 GitHub Pages 複製到本機。");
+        return false;
+    }
+
+    private async Task<bool> EnsureGitHubRemoteAsync()
+    {
+        var remote = await _github.DetectRemoteAsync(_project.ProjectPath!).ConfigureAwait(true);
+        var target = GitHubService.ParseRepositoryTarget(remote);
+        if (target.IsValid && target.Platform == GitHostingPlatform.GitHub)
+            return true;
+
+        var platform = target.IsValid ? target.PlatformLabel : "目前";
+        StatusMessage = $"{platform} repository 不使用 GitHub Actions／Pages API；請使用該平台的 CI／Pages 設定。";
+        AppendLog(StatusMessage);
         return false;
     }
 

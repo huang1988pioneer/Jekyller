@@ -59,8 +59,8 @@ internal static class WindowsToolResolver
             var arguments = psi.Arguments;
             psi.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
             psi.Arguments = string.IsNullOrWhiteSpace(arguments)
-                ? $"/d /c \"\"{resolved}\"\""
-                : $"/d /c \"\"{resolved}\" {arguments}\"";
+                ? $"/d /s /c \"\"{resolved}\"\""
+                : $"/d /s /c \"\"{resolved}\" {arguments}\"";
             return;
         }
 

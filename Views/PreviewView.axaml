@@ -6,7 +6,7 @@
   <Grid RowDefinitions="Auto,*" Margin="8">
     <StackPanel Spacing="12">
       <TextBlock Text="本機預覽 (jekyll serve)" FontSize="22" FontWeight="Bold" />
-      <TextBlock Text="在本機啟動 Jekyll 開發伺服器，以瀏覽器即時預覽站台（含 livereload）。"
+      <TextBlock Text="在本機啟動 Jekyll 開發伺服器。會帶入 _config.yml 的 baseurl，並包含草稿與未來日期文章。"
                  Opacity="0.75" TextWrapping="Wrap" />
 
       <Border Padding="14" CornerRadius="10"
@@ -21,13 +21,16 @@
             <CheckBox Grid.Column="2" Content="Live Reload" IsChecked="{Binding LiveReload}"
                       VerticalAlignment="Center" Margin="0,0,8,8" />
           </Grid>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="啟動 jekyll serve" Command="{Binding StartCommand}" Classes="accent"
-                    IsEnabled="{Binding CanStart}" />
-            <Button Content="停止" Command="{Binding StopCommand}" IsEnabled="{Binding IsRunning}" />
-            <Button Content="在瀏覽器開啟" Command="{Binding OpenBrowserCommand}" />
-            <Button Content="清除日誌" Command="{Binding ClearLogCommand}" />
-          </StackPanel>
+          <DockPanel LastChildFill="True">
+            <Button DockPanel.Dock="Right" Content="停止" Command="{Binding StopCommand}"
+                    IsEnabled="{Binding IsRunning}" HorizontalAlignment="Right" Margin="12,0,0,0" />
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+              <Button Content="啟動 jekyll serve" Command="{Binding StartCommand}" Classes="accent"
+                      IsEnabled="{Binding CanStart}" />
+              <Button Content="在瀏覽器開啟" Command="{Binding OpenBrowserCommand}" />
+              <Button Content="清除日誌" Command="{Binding ClearLogCommand}" />
+            </StackPanel>
+          </DockPanel>
           <TextBox Text="{Binding SiteUrl}" IsReadOnly="True" PlaceholderText="Site URL" />
         </StackPanel>
       </Border>

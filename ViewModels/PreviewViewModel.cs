@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jekyller.Services;
@@ -20,7 +21,11 @@ public partial class PreviewViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(CanStart))]
     public partial bool IsRunning { get; set; }
 
-    public bool CanStart => !IsRunning;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    public partial bool IsStarting { get; set; }
+
+    public bool CanStart => !IsRunning && !IsStarting;
 
     [ObservableProperty]
     public partial string SiteUrl { get; set; } = "—";
@@ -40,13 +45,8 @@ public partial class PreviewViewModel : ViewModelBase
         _project = project;
         _dialogs = dialogs;
 
-        _serve.StateChanged += (_, _) => SyncState();
-        _serve.OutputReceived += (_, line) =>
-        {
-            // marshal to UI via property set; Avalonia binds on UI thread mostly after await;
-            // append via Avalonia Dispatcher if needed — property change is usually fine.
-            AppendLog(line);
-        };
+        _serve.StateChanged += (_, _) => PostToUi(SyncState);
+        _serve.OutputReceived += (_, line) => PostToUi(() => AppendLog(line));
 
         _project.ProjectChanged += (_, _) =>
             ProjectPathDisplay = _project.HasProject ? _project.ProjectPath! : "尚未開啟專案";
@@ -58,7 +58,10 @@ public partial class PreviewViewModel : ViewModelBase
     {
         IsRunning = _serve.IsRunning;
         SiteUrl = _serve.SiteUrl ?? $"http://127.0.0.1:{Port}/";
-        StatusText = IsRunning ? $"執行中 · {SiteUrl}" : "已停止";
+        if (IsStarting && !IsRunning)
+            StatusText = "啟動中…";
+        else
+            StatusText = IsRunning ? $"執行中 · {SiteUrl}" : "已停止";
     }
 
     [RelayCommand]
@@ -70,23 +73,31 @@ public partial class PreviewViewModel : ViewModelBase
             return;
         }
 
-        if (IsRunning)
+        if (IsRunning || IsStarting)
         {
             await _dialogs.ShowMessageAsync("提示", "伺服器已在執行中。").ConfigureAwait(true);
             return;
         }
 
+        IsStarting = true;
+        StatusText = "啟動中…";
         try
         {
             AppendLog($"準備在 {_project.ProjectPath} 啟動 serve…");
             await _serve.StartAsync(_project.ProjectPath!, Port, LiveReload).ConfigureAwait(true);
             SyncState();
-            AppendLog("已送出啟動請求。等待 Server address…");
+            if (IsRunning)
+                AppendLog("程序已啟動，等待 Server address…");
         }
         catch (Exception ex)
         {
             AppendLog("啟動失敗：" + ex.Message);
             await _dialogs.ShowMessageAsync("啟動失敗", ex.Message).ConfigureAwait(true);
+        }
+        finally
+        {
+            IsStarting = false;
+            SyncState();
         }
     }
 
@@ -112,5 +123,13 @@ public partial class PreviewViewModel : ViewModelBase
     {
         if (string.IsNullOrWhiteSpace(line)) return;
         Log += $"[{DateTime.Now:HH:mm:ss}] {line}{Environment.NewLine}";
+    }
+
+    private static void PostToUi(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+            action();
+        else
+            Dispatcher.UIThread.Post(action);
     }
 }
