@@ -10,7 +10,7 @@ public static class GitHubPagesUrl
 
         if (!value.Contains("://", StringComparison.Ordinal))
         {
-            if (!value.Contains(".github.io", StringComparison.OrdinalIgnoreCase))
+            if (!IsSupportedPagesHost(value))
                 return null;
             value = $"https://{value.TrimStart('/')}";
         }
@@ -26,17 +26,35 @@ public static class GitHubPagesUrl
             && !uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        const string suffix = ".github.io";
         var host = uri.IdnHost;
-        if (!host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) || host.Length <= suffix.Length)
+        var mapping = PlatformMappings.FirstOrDefault(item =>
+            host.EndsWith(item.PagesHostSuffix, StringComparison.OrdinalIgnoreCase)
+            && host.Length > item.PagesHostSuffix.Length);
+        if (mapping.PagesHostSuffix is null)
             return null;
 
-        var owner = host[..^suffix.Length];
+        var owner = host[..^mapping.PagesHostSuffix.Length];
         if (string.IsNullOrWhiteSpace(owner) || owner.Contains('.', StringComparison.Ordinal))
             return null;
 
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var repository = segments.Length == 0 ? $"{owner}.github.io" : segments[0];
-        return $"https://github.com/{owner}/{repository}";
+        var repository = segments.Length == 0 ? mapping.UserSiteRepository(owner) : segments[0];
+        return $"https://{mapping.RepositoryHost}/{owner}/{repository}";
     }
+
+    private static bool IsSupportedPagesHost(string value) =>
+        PlatformMappings.Any(item => value.Contains(item.PagesHostSuffix, StringComparison.OrdinalIgnoreCase));
+
+    private static readonly PlatformPagesMapping[] PlatformMappings =
+    [
+        new(".github.io", "github.com", owner => $"{owner}.github.io"),
+        new(".gitlab.io", "gitlab.com", owner => $"{owner}.gitlab.io"),
+        new(".codeberg.page", "codeberg.org", _ => "pages"),
+        new(".bitbucket.io", "bitbucket.org", owner => $"{owner}.bitbucket.io")
+    ];
+
+    private readonly record struct PlatformPagesMapping(
+        string PagesHostSuffix,
+        string RepositoryHost,
+        Func<string, string> UserSiteRepository);
 }

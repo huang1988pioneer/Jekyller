@@ -23,6 +23,12 @@ try
     Assert(settings.GetExistingRecentProjects().SequenceEqual([first]), "recents contains first");
     Assert(settings.GetAutoOpenProjectPath() == first, "auto-open returns first");
 
+    settings.SetRepositoryUrl("GitHub", "https://github.com/a/site");
+    settings.SetRepositoryUrl("GitLab", "https://gitlab.com/b/site");
+    settings.SetSelectedGitPlatform("GitLab");
+    Assert(settings.GetRepositoryUrl("GitHub") == "https://github.com/a/site", "GitHub URL is stored separately");
+    Assert(settings.GetRepositoryUrl("GitLab") == "https://gitlab.com/b/site", "GitLab URL is stored separately");
+
     settings.RememberOpenedProject(second);
     settings.RememberOpenedProject(first);
     Assert(settings.Current.LastProjectPath == first, "reopening first makes it last");
@@ -32,6 +38,8 @@ try
 
     var reloaded = new SettingsService(settingsPath);
     reloaded.Load();
+    Assert(reloaded.Current.SelectedGitPlatform == "GitLab", "selected Git platform persists");
+    Assert(reloaded.GetRepositoryUrl("GitHub") == "https://github.com/a/site", "per-platform URLs persist");
     Assert(reloaded.Current.LastProjectPath == first, "last path persists");
     Assert(
         reloaded.GetExistingRecentProjects().SequenceEqual([first, second]),

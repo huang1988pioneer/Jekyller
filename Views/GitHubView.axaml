@@ -18,7 +18,8 @@
           <TextBlock Text="{Binding GhStatus}" />
           <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
             <Button Content="重新整理狀態" Command="{Binding RefreshCommand}" IsEnabled="{Binding !IsBusy}" />
-            <Button Content="GitHub 登入 (gh auth)" Command="{Binding LoginCommand}" IsEnabled="{Binding !IsBusy}" />
+            <Button Content="GitHub 登入 (gh auth)" Command="{Binding LoginCommand}"
+                    IsEnabled="{Binding !IsBusy}" IsVisible="{Binding IsGitHubPlatformSelected}" />
             <Button Content="只加入 workflow 檔" Command="{Binding AddWorkflowOnlyCommand}"
                     IsEnabled="{Binding HasLocalProject}" IsVisible="{Binding IsGitHubRemote}" />
           </StackPanel>
@@ -38,9 +39,12 @@
             </Border>
           </Grid>
 
-          <TextBox Text="{Binding RepositoryUrl}"
-                   PlaceholderText="https://codeberg.org/owner/repository"
-                   FontFamily="Consolas, Cascadia Mono, monospace" />
+          <Grid ColumnDefinitions="180,*">
+            <ComboBox ItemsSource="{Binding GitPlatforms}" SelectedItem="{Binding SelectedGitPlatform}" Margin="0,0,8,0" />
+            <TextBox Grid.Column="1" Text="{Binding RepositoryUrl}"
+                     PlaceholderText="https://codeberg.org/owner/repository"
+                     FontFamily="Consolas, Cascadia Mono, monospace" />
+          </Grid>
 
           <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
             <TextBlock Text="父資料夾" VerticalAlignment="Center" Margin="0,0,8,8" />
@@ -59,7 +63,7 @@
                        Opacity="0.85" LineHeight="20" />
           </Border>
 
-          <Grid ColumnDefinitions="*,Auto">
+          <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsGitHubPlatformSelected}">
             <StackPanel Spacing="6" VerticalAlignment="Center">
               <Button Content="列出我的 GitHub Pages 網站" Command="{Binding ListPagesSitesCommand}"
                       IsEnabled="{Binding !IsBusy}" HorizontalAlignment="Left" />
@@ -116,9 +120,12 @@
             </Border>
           </Grid>
 
-          <TextBox Text="{Binding RepositoryUrl}"
-                   PlaceholderText="https://bitbucket.org/owner/repository"
-                   FontFamily="Consolas, Cascadia Mono, monospace" />
+          <Grid ColumnDefinitions="180,*">
+            <ComboBox ItemsSource="{Binding GitPlatforms}" SelectedItem="{Binding SelectedGitPlatform}" Margin="0,0,8,0" />
+            <TextBox Grid.Column="1" Text="{Binding RepositoryUrl}"
+                     PlaceholderText="https://bitbucket.org/owner/repository"
+                     FontFamily="Consolas, Cascadia Mono, monospace" />
+          </Grid>
 
           <Border Background="#101720" BorderBrush="#2A3648" BorderThickness="1"
                   CornerRadius="8" Padding="12">
@@ -191,7 +198,7 @@
         </Grid>
       </Border>
 
-      <Border Classes="card" IsVisible="{Binding HasLocalProject}">
+      <Border Classes="card" IsVisible="{Binding CanShowGitHubProjectTools}">
         <StackPanel Spacing="12">
           <TextBlock Text="建立新的 GitHub Repository（GitHub 專用）" Classes="sectionTitle" />
           <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto">

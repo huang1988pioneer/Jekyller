@@ -27,6 +27,21 @@
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
+            <Border Background="#182A33" BorderBrush="#355565" BorderThickness="1" CornerRadius="8" Padding="12,10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="3" VerticalAlignment="Center">
+                  <TextBlock Text="Jekyll 版本狀態" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding JekyllVersionMessage}" TextWrapping="Wrap" Opacity="0.85" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <Button Content="重新檢查" Command="{Binding CheckJekyllVersionCommand}"
+                          IsEnabled="{Binding !IsBusy}" />
+                  <Button Content="更新 Jekyll + Bundler" Command="{Binding InstallJekyllCommand}"
+                          IsVisible="{Binding IsJekyllUpdateAvailable}" IsEnabled="{Binding !IsBusy}"
+                          Classes="accent" />
+                </StackPanel>
+              </Grid>
+            </Border>
           </StackPanel>
         </Border>
 
@@ -68,14 +83,18 @@
               </Border>
             </Grid>
 
-            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
-              <TextBlock Text="Repository / Pages" VerticalAlignment="Center" Margin="0,0,8,8" />
-              <TextBox Grid.Column="1" Text="{Binding CloneRepositoryUrl}" Margin="0,0,0,8"
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto">
+              <TextBlock Text="Git 平台" VerticalAlignment="Center" Margin="0,0,8,8" />
+              <ComboBox Grid.Column="1" ItemsSource="{Binding GitPlatforms}"
+                        SelectedItem="{Binding SelectedGitPlatform}" Margin="0,0,0,8" />
+
+              <TextBlock Grid.Row="1" Text="Repository / Pages" VerticalAlignment="Center" Margin="0,0,8,8" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding CloneRepositoryUrl}" Margin="0,0,0,8"
                        PlaceholderText="https://gitlab.com/owner/repository"
                        FontFamily="Consolas, Cascadia Mono, monospace" />
 
-              <TextBlock Grid.Row="1" Text="資料夾名稱" VerticalAlignment="Center" Margin="0,0,8,0" />
-              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding CloneSiteName}"
+              <TextBlock Grid.Row="2" Text="資料夾名稱" VerticalAlignment="Center" Margin="0,0,8,0" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CloneSiteName}"
                        PlaceholderText="預設為 repository 名稱" />
             </Grid>
 

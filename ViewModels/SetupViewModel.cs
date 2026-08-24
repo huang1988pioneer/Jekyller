@@ -14,9 +14,15 @@ public partial class SetupViewModel : ViewModelBase
     private readonly IDialogService _dialogs;
     private readonly IProjectContext _project;
     private readonly IGitHubService _github;
+    private readonly ISettingsService _settings;
+    private bool _changingPlatform;
     private string? _lastAutoCloneSiteName;
 
     public ObservableCollection<ToolStatus> Tools { get; } = [];
+    public IReadOnlyList<GitHostingPlatform> GitPlatforms { get; } = Enum.GetValues<GitHostingPlatform>();
+
+    [ObservableProperty]
+    public partial GitHostingPlatform SelectedGitPlatform { get; set; } = GitHostingPlatform.GitHub;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanCloneNow))]
@@ -30,6 +36,12 @@ public partial class SetupViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial string ProjectPathDisplay { get; set; } = "尚未開啟專案";
+
+    [ObservableProperty]
+    public partial string JekyllVersionMessage { get; set; } = "正在檢查 Jekyll 最新版本…";
+
+    [ObservableProperty]
+    public partial bool IsJekyllUpdateAvailable { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanCloneNow))]
@@ -49,6 +61,7 @@ public partial class SetupViewModel : ViewModelBase
     public bool CanCloneNow =>
         !IsBusy
         && GitHubService.ParseRepositoryTarget(CloneRepositoryUrl).IsValid
+        && GitHubService.ParseRepositoryTarget(CloneRepositoryUrl).Platform == SelectedGitPlatform
         && !string.IsNullOrWhiteSpace(ParentDirectory)
         && !string.IsNullOrWhiteSpace(CloneSiteName);
 
@@ -57,16 +70,24 @@ public partial class SetupViewModel : ViewModelBase
         IJekyllService jekyll,
         IDialogService dialogs,
         IProjectContext project,
-        IGitHubService github)
+        IGitHubService github,
+        ISettingsService settings)
     {
         _environment = environment;
         _jekyll = jekyll;
         _dialogs = dialogs;
         _project = project;
         _github = github;
+        _settings = settings;
+        if (Enum.TryParse<GitHostingPlatform>(_settings.Current.SelectedGitPlatform, true, out var platform))
+            SelectedGitPlatform = platform;
+        _changingPlatform = true;
+        CloneRepositoryUrl = _settings.GetRepositoryUrl(SelectedGitPlatform.ToString());
+        _changingPlatform = false;
         _project.ProjectChanged += (_, _) =>
             ProjectPathDisplay = _project.HasProject ? _project.ProjectPath! : "尚未開啟專案";
         ProjectPathDisplay = _project.HasProject ? _project.ProjectPath! : "尚未開啟專案";
+        _ = RefreshJekyllVersionAsync(writeLog: false);
     }
 
     [RelayCommand]
@@ -80,6 +101,7 @@ public partial class SetupViewModel : ViewModelBase
             Tools.Clear();
             foreach (var t in tools)
                 Tools.Add(t);
+            await RefreshJekyllVersionAsync(writeLog: false).ConfigureAwait(true);
             AppendLog("環境檢查完成。");
         }
         finally
@@ -103,6 +125,29 @@ public partial class SetupViewModel : ViewModelBase
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task CheckJekyllVersionAsync() => RefreshJekyllVersionAsync(writeLog: true);
+
+    private async Task RefreshJekyllVersionAsync(bool writeLog)
+    {
+        JekyllVersionMessage = "正在向 RubyGems 檢查 Jekyll 最新版本…";
+        try
+        {
+            var result = await _environment.CheckJekyllVersionAsync().ConfigureAwait(true);
+            IsJekyllUpdateAvailable = result.IsUpdateAvailable;
+            JekyllVersionMessage = result.Message;
+            if (writeLog)
+                AppendLog(result.Message);
+        }
+        catch (Exception ex)
+        {
+            IsJekyllUpdateAvailable = false;
+            JekyllVersionMessage = $"暫時無法檢查 Jekyll 最新版本：{ex.Message}";
+            if (writeLog)
+                AppendLog(JekyllVersionMessage);
         }
     }
 
@@ -289,6 +334,8 @@ public partial class SetupViewModel : ViewModelBase
 
     partial void OnCloneRepositoryUrlChanged(string value)
     {
+        if (!_changingPlatform)
+            _settings.SetRepositoryUrl(SelectedGitPlatform.ToString(), value);
         var target = GitHubService.ParseRepositoryTarget(value);
         if (target.IsValid && !string.IsNullOrWhiteSpace(target.Repository))
         {
@@ -297,6 +344,15 @@ public partial class SetupViewModel : ViewModelBase
             _lastAutoCloneSiteName = target.Repository;
         }
 
+        UpdateCloneTargetSummary();
+    }
+
+    partial void OnSelectedGitPlatformChanged(GitHostingPlatform value)
+    {
+        _settings.SetSelectedGitPlatform(value.ToString());
+        _changingPlatform = true;
+        CloneRepositoryUrl = _settings.GetRepositoryUrl(value.ToString());
+        _changingPlatform = false;
         UpdateCloneTargetSummary();
     }
 
@@ -312,6 +368,12 @@ public partial class SetupViewModel : ViewModelBase
             CloneTargetSummary = string.IsNullOrWhiteSpace(CloneRepositoryUrl)
                 ? "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。"
                 : target.ErrorMessage;
+            return;
+        }
+
+        if (target.Platform != SelectedGitPlatform)
+        {
+            CloneTargetSummary = $"目前選擇 {SelectedGitPlatform}，但網址屬於 {target.PlatformLabel}。請切換平台或更正網址。";
             return;
         }
 

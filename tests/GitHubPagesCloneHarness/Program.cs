@@ -7,6 +7,15 @@ Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://alice.github.io/blog/")
     "Project site Pages URL must map to owner/repo.");
 Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("alice.github.io/notes") == "https://github.com/alice/notes",
     "Scheme-less Pages URL must be accepted.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://group5923835.gitlab.io/fengtusama.gitlab.io/")
+       == "https://gitlab.com/group5923835/fengtusama.gitlab.io",
+    "GitLab Pages URL must map to its GitLab repository.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://fengtusama.codeberg.page/")
+       == "https://codeberg.org/fengtusama/pages",
+    "Codeberg user Pages URL must map to the pages repository.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://fengtusama.bitbucket.io/")
+       == "https://bitbucket.org/fengtusama/fengtusama.bitbucket.io",
+    "Bitbucket static website URL must map to the workspace.bitbucket.io repository.");
 Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://github.com/alice/blog") is null,
     "github.com repository URLs are not Pages hosts.");
 Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://example.com") is null,

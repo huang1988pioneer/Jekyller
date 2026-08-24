@@ -18,4 +18,6 @@ public sealed class AppSettings
     public List<string> RecentProjects { get; set; } = [];
     public bool? AutoOpenLastProject { get; set; }
     public string MarkdownEditorMode { get; set; } = "Wysiwyg";
+    public string SelectedGitPlatform { get; set; } = "GitHub";
+    public Dictionary<string, string> RepositoryUrls { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

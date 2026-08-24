@@ -8,7 +8,7 @@ namespace Jekyller.Services;
 
 public sealed class DeploymentMonitorService
 {
-    public const string MarkerFileName = "jekyller-deployment.json";
+    public const string MarkerFileName = DeploymentMarkerFiles.PrimaryFileName;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -29,13 +29,15 @@ public sealed class DeploymentMonitorService
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
 
-        var markerPath = Path.Combine(sitePath, MarkerFileName);
         var json = JsonSerializer.Serialize(marker, JsonOptions);
-        await File.WriteAllTextAsync(
-            markerPath,
-            json,
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            cancellationToken).ConfigureAwait(false);
+        foreach (var markerPath in DeploymentMarkerFiles.SourceMarkerPaths(sitePath))
+        {
+            await File.WriteAllTextAsync(
+                markerPath,
+                json,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                cancellationToken).ConfigureAwait(false);
+        }
         return marker;
     }
 
@@ -56,12 +58,12 @@ public sealed class DeploymentMonitorService
             };
         }
 
-        if (!TryBuildMarkerUri(pagesUrl, expected.DeploymentId, out var markerUri))
+        if (!TryBuildMarkerUri(pagesUrl, MarkerFileName, expected.DeploymentId, out _))
         {
             return new DeploymentCheckResult
             {
                 State = DeploymentVersionState.NotConfigured,
-                Message = "尚未取得有效的 GitHub Pages 網址，無法檢查線上版本。",
+                Message = "尚未取得有效的 Pages 網址，無法檢查線上版本。",
                 ExpectedDeploymentId = expected.DeploymentId,
                 CheckedAt = checkedAt
             };
@@ -69,58 +71,66 @@ public sealed class DeploymentMonitorService
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, markerUri);
-            request.Headers.CacheControl = new CacheControlHeaderValue
+            foreach (var fileName in DeploymentMarkerFiles.ReadCandidates)
             {
-                NoCache = true,
-                NoStore = true
-            };
-            using var response = await Client.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
-
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return Previous(expected, null, checkedAt,
-                    "線上網站仍是上一版本；尚未找到最新部署標記。");
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return Unavailable(expected, checkedAt,
-                    $"暫時無法檢查線上版本（HTTP {(int)response.StatusCode}）。5 分鐘後會自動重試。");
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            DeploymentMarker? live;
-            try
-            {
-                live = JsonSerializer.Deserialize<DeploymentMarker>(json, JsonOptions);
-            }
-            catch (JsonException)
-            {
-                return Previous(expected, null, checkedAt,
-                    "線上網站仍是上一版本；目前回應尚未包含有效的部署標記。");
-            }
-
-            if (live is null || string.IsNullOrWhiteSpace(live.DeploymentId))
-            {
-                return Previous(expected, null, checkedAt,
-                    "線上網站仍是上一版本；目前回應尚未包含有效的部署標記。");
-            }
-
-            return string.Equals(live.DeploymentId, expected.DeploymentId, StringComparison.Ordinal)
-                ? new DeploymentCheckResult
+                TryBuildMarkerUri(pagesUrl, fileName, expected.DeploymentId, out var markerUri);
+                using var request = new HttpRequestMessage(HttpMethod.Get, markerUri);
+                request.Headers.CacheControl = new CacheControlHeaderValue
                 {
-                    State = DeploymentVersionState.Latest,
-                    Message = "線上網站已是最新版本。",
-                    ExpectedDeploymentId = expected.DeploymentId,
-                    LiveDeploymentId = live.DeploymentId,
-                    CheckedAt = checkedAt
+                    NoCache = true,
+                    NoStore = true
+                };
+                using var response = await Client.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                    continue;
+
+                if (PagesAccessStatus.TryCreateProtectedSiteMessage(
+                        response.StatusCode,
+                        response.Headers.Location,
+                        out var protectedSiteMessage))
+                {
+                    return Unavailable(expected, checkedAt, protectedSiteMessage);
                 }
-                : Previous(expected, live.DeploymentId, checkedAt,
-                    "線上網站仍是上一版本；GitHub Pages 尚在部署最新內容。");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return Unavailable(expected, checkedAt,
+                        $"暫時無法檢查線上版本（HTTP {(int)response.StatusCode}）。5 分鐘後會自動重試。");
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                DeploymentMarker? live;
+                try
+                {
+                    live = JsonSerializer.Deserialize<DeploymentMarker>(json, JsonOptions);
+                }
+                catch (JsonException)
+                {
+                    continue;
+                }
+
+                if (live is null || string.IsNullOrWhiteSpace(live.DeploymentId))
+                    continue;
+
+                return string.Equals(live.DeploymentId, expected.DeploymentId, StringComparison.Ordinal)
+                    ? new DeploymentCheckResult
+                    {
+                        State = DeploymentVersionState.Latest,
+                        Message = "線上網站已是最新版本。",
+                        ExpectedDeploymentId = expected.DeploymentId,
+                        LiveDeploymentId = live.DeploymentId,
+                        CheckedAt = checkedAt
+                    }
+                    : Previous(expected, live.DeploymentId, checkedAt,
+                        "線上網站仍是上一版本；Pages 尚在部署最新內容。");
+            }
+
+            return Previous(expected, null, checkedAt,
+                "線上網站仍是上一版本；尚未找到最新部署標記。");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -137,22 +147,27 @@ public sealed class DeploymentMonitorService
         string sitePath,
         CancellationToken cancellationToken)
     {
-        var markerPath = Path.Combine(sitePath, MarkerFileName);
-        if (!File.Exists(markerPath)) return null;
+        foreach (var markerPath in DeploymentMarkerFiles.ExpectedMarkerPaths(sitePath))
+        {
+            if (!File.Exists(markerPath)) continue;
 
-        try
-        {
-            var json = await File.ReadAllTextAsync(markerPath, cancellationToken).ConfigureAwait(false);
-            var marker = JsonSerializer.Deserialize<DeploymentMarker>(json, JsonOptions);
-            return marker is not null && !string.IsNullOrWhiteSpace(marker.DeploymentId) ? marker : null;
+            try
+            {
+                var json = await File.ReadAllTextAsync(markerPath, cancellationToken).ConfigureAwait(false);
+                var marker = JsonSerializer.Deserialize<DeploymentMarker>(json, JsonOptions);
+                if (marker is not null && !string.IsNullOrWhiteSpace(marker.DeploymentId))
+                    return marker;
+            }
+            catch (JsonException)
+            {
+                // Try the other supported marker name.
+            }
         }
-        catch (JsonException)
-        {
-            return null;
-        }
+
+        return null;
     }
 
-    private static bool TryBuildMarkerUri(string? pagesUrl, string expectedId, out Uri markerUri)
+    private static bool TryBuildMarkerUri(string? pagesUrl, string fileName, string expectedId, out Uri markerUri)
     {
         markerUri = null!;
         if (!Uri.TryCreate(pagesUrl?.Trim(), UriKind.Absolute, out var baseUri)
@@ -163,7 +178,7 @@ public sealed class DeploymentMonitorService
 
         var root = new Uri(baseUri.ToString().TrimEnd('/') + "/", UriKind.Absolute);
         markerUri = new Uri(root,
-            $"{MarkerFileName}?deployment={Uri.EscapeDataString(expectedId)}&checked={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
+            $"{fileName}?deployment={Uri.EscapeDataString(expectedId)}&checked={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         return true;
     }
 
@@ -193,7 +208,11 @@ public sealed class DeploymentMonitorService
 
     private static HttpClient CreateHttpClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        };
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Jekyller-Deployment-Monitor/1.0");
         return client;
     }

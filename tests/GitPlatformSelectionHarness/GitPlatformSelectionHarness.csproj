@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Services\GitPlatformSelection.cs" Link="Services\GitPlatformSelection.cs" />
+    <Compile Include="..\..\Services\GitHostingAccessChecks.cs" Link="Services\GitHostingAccessChecks.cs" />
+    <Compile Include="..\..\Services\GitHostingProcessErrors.cs" Link="Services\GitHostingProcessErrors.cs" />
+    <Compile Include="..\..\Services\ProcessResult.cs" Link="Services\ProcessResult.cs" />
+    <Compile Include="..\..\Services\PagesAccessStatus.cs" Link="Services\PagesAccessStatus.cs" />
+    <Compile Include="..\..\Services\StaticPagesDeployment.cs" Link="Services\StaticPagesDeployment.cs" />
+    <Compile Include="..\..\Services\DeploymentMarkerFiles.cs" Link="Services\DeploymentMarkerFiles.cs" />
+    <Compile Include="..\..\Services\GitLabPagesCi.cs" Link="Services\GitLabPagesCi.cs" />
+    <Compile Include="..\..\Models\GitHubPagesStatus.cs" Link="Models\GitHubPagesStatus.cs" />
+  </ItemGroup>
+</Project>

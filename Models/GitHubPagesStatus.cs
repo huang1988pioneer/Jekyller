@@ -38,6 +38,7 @@ public sealed class DeploymentCheckResult
 
 public sealed class GitRemoteInfo
 {
+    public string RemoteName { get; set; } = "origin";
     public string? RemoteUrl { get; set; }
     public string? Owner { get; set; }
     public string? Repo { get; set; }

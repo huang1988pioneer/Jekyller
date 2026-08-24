@@ -5,6 +5,7 @@ namespace Jekyller.Services;
 public interface IEnvironmentService
 {
     Task<IReadOnlyList<ToolStatus>> CheckToolsAsync(CancellationToken cancellationToken = default);
+    Task<JekyllVersionCheckResult> CheckJekyllVersionAsync(CancellationToken cancellationToken = default);
     Task<ProcessResult> InstallJekyllAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default);
     Task<ProcessResult> InstallBundlerAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default);
 }
@@ -12,6 +13,11 @@ public interface IEnvironmentService
 public sealed class EnvironmentService(IProcessRunner processRunner) : IEnvironmentService
 {
     private const string RubyWingetPackageId = "RubyInstallerTeam.RubyWithDevKit.3.4";
+    private static readonly HttpClient RubyGemsClient = new()
+    {
+        BaseAddress = new Uri("https://rubygems.org/"),
+        Timeout = TimeSpan.FromSeconds(20)
+    };
 
     public async Task<IReadOnlyList<ToolStatus>> CheckToolsAsync(CancellationToken cancellationToken = default)
     {
@@ -41,6 +47,33 @@ public sealed class EnvironmentService(IProcessRunner processRunner) : IEnvironm
         }
 
         return results;
+    }
+
+    public async Task<JekyllVersionCheckResult> CheckJekyllVersionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var installed = await processRunner.RunAsync(
+                "jekyll", "-v", cancellationToken: cancellationToken, timeoutMs: 10_000)
+            .ConfigureAwait(false);
+        if (!installed.Success)
+            return JekyllVersionComparison.Create(string.Empty, string.Empty, remoteCheckSucceeded: false);
+
+        try
+        {
+            var remoteJson = await RubyGemsClient.GetStringAsync(
+                    "api/v1/gems/jekyll.json",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return JekyllVersionComparison.Create(installed.CombinedOutput, remoteJson, true);
+        }
+        catch (HttpRequestException)
+        {
+            return JekyllVersionComparison.Create(installed.CombinedOutput, string.Empty, false);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return JekyllVersionComparison.Create(installed.CombinedOutput, string.Empty, false);
+        }
     }
 
     public async Task<ProcessResult> InstallBundlerAsync(IProgress<string>? output = null, CancellationToken cancellationToken = default)

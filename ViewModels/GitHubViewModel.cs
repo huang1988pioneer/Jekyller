@@ -16,11 +16,15 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     private readonly IProjectContext _project;
     private readonly IDialogService _dialogs;
     private readonly DeploymentMonitorService _deploymentMonitor;
+    private readonly ISettingsService _settings;
+    private bool _changingPlatform;
+    private bool _initialized;
     private readonly SemaphoreSlim _deploymentCheckGate = new(1, 1);
     private CancellationTokenSource? _deploymentMonitorCts;
     private DeploymentVersionState? _lastDeploymentState;
     private string? _lastExpectedDeploymentId;
     private string? _lastAutoCloneSiteName;
+    private GitRemoteInfo? _lastRemoteInfo;
 
     [ObservableProperty]
     public partial string GitStatus { get; set; } = string.Empty;
@@ -69,6 +73,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     public partial bool HasPagesSites { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanShowGitHubProjectTools))]
     public partial bool HasLocalProject { get; set; }
 
     [ObservableProperty]
@@ -125,20 +130,37 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         && !string.IsNullOrWhiteSpace(CloneParentDirectory)
         && !string.IsNullOrWhiteSpace(CloneSiteName);
 
+    public bool IsGitHubPlatformSelected => SelectedGitPlatform == GitHostingPlatform.GitHub;
+
+    public bool CanShowGitHubProjectTools => HasLocalProject && IsGitHubPlatformSelected;
+
     public ObservableCollection<GitHubPagesSiteItem> PagesSites { get; } = [];
+    public IReadOnlyList<GitHostingPlatform> GitPlatforms { get; } = Enum.GetValues<GitHostingPlatform>();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsGitHubPlatformSelected))]
+    [NotifyPropertyChangedFor(nameof(CanShowGitHubProjectTools))]
+    public partial GitHostingPlatform SelectedGitPlatform { get; set; } = GitHostingPlatform.GitHub;
 
     public GitHubViewModel(
         IGitHubService github,
         IJekyllService jekyll,
         IProjectContext project,
         IDialogService dialogs,
-        DeploymentMonitorService deploymentMonitor)
+        DeploymentMonitorService deploymentMonitor,
+        ISettingsService settings)
     {
         _github = github;
         _jekyll = jekyll;
         _project = project;
         _dialogs = dialogs;
         _deploymentMonitor = deploymentMonitor;
+        _settings = settings;
+        if (Enum.TryParse<GitHostingPlatform>(_settings.Current.SelectedGitPlatform, true, out var platform))
+            SelectedGitPlatform = platform;
+        _changingPlatform = true;
+        RepositoryUrl = _settings.GetRepositoryUrl(SelectedGitPlatform.ToString());
+        _changingPlatform = false;
         HasLocalProject = _project.HasProject;
         if (string.IsNullOrWhiteSpace(CloneParentDirectory))
             CloneParentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -151,11 +173,14 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
         };
         EnsureDeploymentMonitorStarted();
+        _initialized = true;
         _ = RefreshAsync();
     }
 
     partial void OnRepositoryUrlChanged(string value)
     {
+        if (!_changingPlatform)
+            _settings.SetRepositoryUrl(SelectedGitPlatform.ToString(), value);
         var target = GitHubService.ParseRepositoryTarget(value);
         CanConnectRepository = target.IsValid;
         if (!target.IsValid)
@@ -163,6 +188,14 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             RepositoryTargetSummary = string.IsNullOrWhiteSpace(value)
                 ? "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。"
                 : target.ErrorMessage;
+            UpdateCloneTargetSummary();
+            return;
+        }
+
+        if (target.Platform != SelectedGitPlatform)
+        {
+            CanConnectRepository = false;
+            RepositoryTargetSummary = $"目前選擇 {SelectedGitPlatform}，但網址屬於 {target.PlatformLabel}。請切換平台或更正網址。";
             UpdateCloneTargetSummary();
             return;
         }
@@ -178,6 +211,18 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 ? "此平台不提供可自動推定的 Pages 網址；Jekyller 只處理 Git 連結與推送。"
                 : $"建議 Pages 網址：{target.PagesUrl}\n_config.yml：url={target.JekyllUrl}  baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
         UpdateCloneTargetSummary();
+        UpdateLocalRepositorySummary(target);
+    }
+
+    partial void OnSelectedGitPlatformChanged(GitHostingPlatform value)
+    {
+        _settings.SetSelectedGitPlatform(value.ToString());
+        _changingPlatform = true;
+        RepositoryUrl = _settings.GetRepositoryUrl(value.ToString());
+        _changingPlatform = false;
+        OnRepositoryUrlChanged(RepositoryUrl);
+        if (_initialized)
+            _ = RefreshAsync();
     }
 
     [RelayCommand]
@@ -213,18 +258,26 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrWhiteSpace(RepoName))
                 RepoName = Path.GetFileName(site.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
-            var info = await _github.GetInfoAsync(site).ConfigureAwait(true);
+            var info = await _github.GetInfoAsync(site, SelectedGitPlatform).ConfigureAwait(true);
+            _lastRemoteInfo = info;
             var remoteTarget = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
-            IsGitHubRemote = remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.GitHub;
-            HostingPlatformLabel = remoteTarget.IsValid ? remoteTarget.PlatformLabel : "Git 平台";
-            if (string.IsNullOrWhiteSpace(RepositoryUrl) && !string.IsNullOrWhiteSpace(info.RemoteUrl))
+            var configuredTarget = GitHubService.ParseRepositoryTarget(RepositoryUrl);
+            var selectedTarget = GitPlatformSelection.GetSelectedPlatformTarget(
+                SelectedGitPlatform,
+                configuredTarget,
+                remoteTarget);
+            IsGitHubRemote = GitPlatformSelection.ShouldUseGitHubPagesApi(
+                SelectedGitPlatform,
+                selectedTarget,
+                remoteTarget);
+            HostingPlatformLabel = selectedTarget.PlatformLabel;
+            if (GitPlatformSelection.ShouldAdoptRemote(
+                    SelectedGitPlatform,
+                    RepositoryUrl,
+                    remoteTarget)
+                && !string.IsNullOrWhiteSpace(info.RemoteUrl))
                 RepositoryUrl = info.RemoteUrl;
-            RemoteSummary =
-                $"使用者：{info.GhUser ?? "（未登入）"}\n" +
-                $"驗證：{(info.GhAuthenticated ? "已登入" : "未登入")}\n" +
-                $"分支：{info.Branch ?? "—"}\n" +
-                $"Remote：{info.RemoteUrl ?? "（無 origin）"}\n" +
-                $"Repo：{(info.Owner is null ? "—" : $"{info.Owner}/{info.Repo}")}";
+            RemoteSummary = BuildRemoteSummary(info, selectedTarget, remoteTarget);
 
             await RefreshPagesStatusAsync().ConfigureAwait(true);
             await CheckDeploymentVersionAsync(manual: false, CancellationToken.None).ConfigureAwait(true);
@@ -336,6 +389,12 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (!target.IsValid)
         {
             StatusMessage = target.ErrorMessage;
+            return;
+        }
+        if (target.Platform != SelectedGitPlatform)
+        {
+            StatusMessage = $"目前選擇 {SelectedGitPlatform}，但網址屬於 {target.PlatformLabel}。請切換平台或更正網址。";
+            AppendLog(StatusMessage);
             return;
         }
 
@@ -553,7 +612,13 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (!EnsureProject()) return;
 
         var site = _project.ProjectPath!;
-        var info = await _github.GetInfoAsync(site).ConfigureAwait(true);
+        var info = await _github.GetInfoAsync(site, SelectedGitPlatform).ConfigureAwait(true);
+        var remoteTarget = GitHubService.ParseRepositoryTarget(info.RemoteUrl);
+        var configuredTarget = GitHubService.ParseRepositoryTarget(RepositoryUrl);
+        var selectedTarget = GitPlatformSelection.GetSelectedPlatformTarget(
+            SelectedGitPlatform,
+            configuredTarget,
+            remoteTarget);
         if (string.IsNullOrWhiteSpace(info.RemoteUrl))
         {
             var candidate = !string.IsNullOrWhiteSpace(RepositoryUrl) ? RepositoryUrl : RepoName;
@@ -561,12 +626,23 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             if (target.IsValid)
             {
                 RepositoryUrl = candidate;
-                AppendLog($"尚未設定 origin；改用安全連結流程：{target.Owner}/{target.Repository}");
+                AppendLog($"尚未設定 {GitHubService.RemoteNameFor(target.Platform)} remote；改用安全連結流程：{target.Owner}/{target.Repository}");
                 await ConnectExistingRepositoryAsync().ConfigureAwait(true);
                 return;
             }
 
             StatusMessage = "尚未連結 repository。請先在上方貼上完整 Repository URL，再按「連結並推送」。";
+            AppendLog(StatusMessage);
+            return;
+        }
+
+        if (selectedTarget.IsValid
+            && remoteTarget.IsValid
+            && !GitPlatformSelection.IsSameRepository(selectedTarget, remoteTarget))
+        {
+            StatusMessage =
+                $"目前選取 {selectedTarget.PlatformLabel} ({selectedTarget.Owner}/{selectedTarget.Repository})，" +
+                $"但本機 {info.RemoteName} remote 仍是 {remoteTarget.PlatformLabel} ({remoteTarget.Owner}/{remoteTarget.Repository})；已停止推送以避免送到錯的平台。請先按「連結並推送」或手動切換 {info.RemoteName} remote。";
             AppendLog(StatusMessage);
             return;
         }
@@ -580,7 +656,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
                 if (target.IsValid && !string.IsNullOrWhiteSpace(target.JekyllUrl))
                 {
                     await _github.UpdateSiteUrlsAsync(site, target).ConfigureAwait(true);
-                    AppendLog($"已依 origin 同步 _config.yml：url={target.JekyllUrl}，baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
+                    AppendLog($"已依 {info.RemoteName} remote 同步 _config.yml：url={target.JekyllUrl}，baseurl={(string.IsNullOrEmpty(target.JekyllBaseUrl) ? "\"\"" : target.JekyllBaseUrl)}");
                 }
             }
 
@@ -598,6 +674,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             var result = await _github.PushAsync(
                 site,
                 CommitMessage,
+                SelectedGitPlatform,
                 new Progress<string>(m =>
                 {
                     AppendLog(m);
@@ -629,8 +706,8 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         IsBusy = true;
         try
         {
-            AppendLog("從 origin 拉取最新變更…");
-            var result = await _github.PullAsync(_project.ProjectPath!, new Progress<string>(AppendLog))
+            AppendLog($"從 {GitHubService.RemoteNameFor(SelectedGitPlatform)} 拉取最新變更…");
+            var result = await _github.PullAsync(_project.ProjectPath!, SelectedGitPlatform, new Progress<string>(AppendLog))
                 .ConfigureAwait(true);
             AppendLog(result.Success ? "Pull 完成。" : "Pull 失敗：\n" + result.CombinedOutput);
             StatusMessage = result.Success ? "Pull 完成" : "Pull 失敗";
@@ -670,15 +747,47 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     {
         if (!_project.HasProject) return;
 
-        var remote = await _github.DetectRemoteAsync(_project.ProjectPath!).ConfigureAwait(true);
-        var target = GitHubService.ParseRepositoryTarget(remote);
-        if (target.IsValid && target.Platform != GitHostingPlatform.GitHub)
+        var remote = await _github.DetectRemoteAsync(_project.ProjectPath!, SelectedGitPlatform).ConfigureAwait(true);
+        var remoteTarget = GitHubService.ParseRepositoryTarget(remote);
+        var configuredTarget = GitHubService.ParseRepositoryTarget(RepositoryUrl);
+        var selectedTarget = GitPlatformSelection.GetSelectedPlatformTarget(
+            SelectedGitPlatform,
+            configuredTarget,
+            remoteTarget);
+        HostingPlatformLabel = selectedTarget.PlatformLabel;
+        IsGitHubRemote = GitPlatformSelection.ShouldUseGitHubPagesApi(
+            SelectedGitPlatform,
+            selectedTarget,
+            remoteTarget);
+        var isLinkedToSelectedRepository = GitPlatformSelection.IsSameRepository(selectedTarget, remoteTarget);
+
+        if (!isLinkedToSelectedRepository)
         {
-            PagesUrl = target.PagesUrl ?? string.Empty;
-            PagesSummary = string.IsNullOrWhiteSpace(target.PagesUrl)
-                ? $"{target.PlatformLabel} repository 已連結；Pages／CI 部署需在平台端設定。"
-                : $"{target.PlatformLabel} 建議網站網址：{target.PagesUrl}（部署需在平台端設定）";
+            PagesUrl = string.Empty;
+            PagesSummary = selectedTarget.IsValid && remoteTarget.IsValid
+                ? $"目前選取 {selectedTarget.PlatformLabel}：{selectedTarget.Owner}/{selectedTarget.Repository}，但本機 {GitHubService.RemoteNameFor(SelectedGitPlatform)} remote 仍指向 {remoteTarget.PlatformLabel}：{remoteTarget.Owner}/{remoteTarget.Repository}。請先按「連結並推送」。"
+                : $"目前選取 {selectedTarget.PlatformLabel}；請先填入並連結 repository。";
+            DeploymentStatus = "尚未連結目前選取的平台";
+            if (updateStatusMessage) StatusMessage = PagesSummary;
+            return;
+        }
+
+        if (selectedTarget.IsValid && selectedTarget.Platform != GitHostingPlatform.GitHub)
+        {
+            PagesUrl = selectedTarget.PagesUrl ?? string.Empty;
+            PagesSummary = string.IsNullOrWhiteSpace(selectedTarget.PagesUrl)
+                ? $"{selectedTarget.PlatformLabel} repository 已選取；Pages／CI 部署需在平台端設定。"
+                : $"{selectedTarget.PlatformLabel} 建議網站網址：{selectedTarget.PagesUrl}（部署需在平台端設定）";
             DeploymentStatus = "非 GitHub Actions 部署";
+            if (updateStatusMessage) StatusMessage = PagesSummary;
+            return;
+        }
+
+        if (!IsGitHubRemote)
+        {
+            PagesUrl = string.Empty;
+            PagesSummary = $"目前選取 {selectedTarget.PlatformLabel}；請先填入並連結 repository。";
+            DeploymentStatus = "尚未連結目前選取的平台";
             if (updateStatusMessage) StatusMessage = PagesSummary;
             return;
         }
@@ -779,17 +888,50 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             }
 
             var site = _project.ProjectPath!;
-            var remote = await _github.DetectRemoteAsync(site, cancellationToken).ConfigureAwait(false);
-            var target = GitHubService.ParseRepositoryTarget(remote);
-            if (string.IsNullOrWhiteSpace(PagesUrl))
+            var remote = await _github.DetectRemoteAsync(site, SelectedGitPlatform, cancellationToken).ConfigureAwait(false);
+            var remoteTarget = GitHubService.ParseRepositoryTarget(remote);
+            var configuredTarget = GitHubService.ParseRepositoryTarget(RepositoryUrl);
+            var selectedTarget = GitPlatformSelection.GetSelectedPlatformTarget(
+                SelectedGitPlatform,
+                configuredTarget,
+                remoteTarget);
+
+            if (!GitPlatformSelection.IsSameRepository(selectedTarget, remoteTarget))
             {
-                if (target.IsValid && target.Platform != GitHostingPlatform.GitHub)
-                    PagesUrl = target.PagesUrl ?? string.Empty;
-                else
+                PagesUrl = string.Empty;
+                DeploymentMonitorTitle = "尚未連結目前選取的平台";
+                DeploymentMonitorSummary = selectedTarget.IsValid && remoteTarget.IsValid
+                    ? $"目前選取 {selectedTarget.PlatformLabel}：{selectedTarget.Owner}/{selectedTarget.Repository}，但本機 {GitHubService.RemoteNameFor(SelectedGitPlatform)} remote 仍指向 {remoteTarget.PlatformLabel}：{remoteTarget.Owner}/{remoteTarget.Repository}。請先按「連結並推送」。"
+                    : $"目前選取 {selectedTarget.PlatformLabel}；請先填入並連結 repository。";
+                DeploymentMonitorSchedule = "連結目前選取的平台後開始檢查";
+                _lastDeploymentState = null;
+                _lastExpectedDeploymentId = null;
+                return;
+            }
+
+            if (selectedTarget.IsValid && selectedTarget.Platform != GitHostingPlatform.GitHub)
+            {
+                PagesUrl = selectedTarget.PagesUrl ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(PagesUrl))
                 {
-                    var pages = await _github.GetPagesStatusAsync(site, cancellationToken).ConfigureAwait(false);
-                    PagesUrl = pages.HtmlUrl;
+                    DeploymentMonitorTitle = $"{selectedTarget.PlatformLabel} 線上版本監控尚未設定";
+                    DeploymentMonitorSummary = $"{selectedTarget.PlatformLabel} 無法自動推定 Pages URL；請在平台端設定 Pages／CI。";
+                    DeploymentMonitorSchedule = "設定 Pages URL 後再檢查";
+                    return;
                 }
+            }
+            else if (!GitPlatformSelection.ShouldUseGitHubPagesApi(SelectedGitPlatform, selectedTarget, remoteTarget))
+            {
+                PagesUrl = string.Empty;
+                DeploymentMonitorTitle = "尚未連結目前選取的平台";
+                DeploymentMonitorSummary = $"目前選取 {selectedTarget.PlatformLabel}，但本機 {GitHubService.RemoteNameFor(SelectedGitPlatform)} remote 尚未指向該 repository。";
+                DeploymentMonitorSchedule = "連結目前選取的平台後開始檢查";
+                return;
+            }
+            else if (string.IsNullOrWhiteSpace(PagesUrl))
+            {
+                var pages = await _github.GetPagesStatusAsync(site, cancellationToken).ConfigureAwait(false);
+                PagesUrl = pages.HtmlUrl;
             }
 
             var result = await _deploymentMonitor.CheckAsync(site, PagesUrl, cancellationToken).ConfigureAwait(false);
@@ -836,6 +978,89 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         {
             IsCheckingDeployment = false;
             _deploymentCheckGate.Release();
+        }
+    }
+
+    private static string BuildRemoteSummary(
+        GitRemoteInfo info,
+        GitHubRepositoryTarget selectedTarget,
+        GitHubRepositoryTarget remoteTarget)
+    {
+        var lines = new List<string>
+        {
+            $"目前選取：{FormatRepositoryTarget(selectedTarget)}",
+            $"本機 {info.RemoteName} remote：{FormatRepositoryRemote(info.RemoteUrl, remoteTarget, info.RemoteName)}",
+            $"分支：{info.Branch ?? "—"}"
+        };
+
+        if (selectedTarget.Platform == GitHostingPlatform.GitHub)
+        {
+            lines.Add($"GitHub 使用者：{info.GhUser ?? "（未登入）"}");
+            lines.Add($"GitHub 驗證：{(info.GhAuthenticated ? "已登入" : "未登入")}");
+        }
+
+        if (selectedTarget.IsValid
+            && remoteTarget.IsValid
+            && !GitPlatformSelection.IsSameRepository(selectedTarget, remoteTarget))
+        {
+            lines.Add(
+                $"狀態：本機 {info.RemoteName} remote 仍指向 {remoteTarget.PlatformLabel}；目前選取的是 {selectedTarget.PlatformLabel}。請先「連結並推送」，才會更新目前平台的 remote。");
+        }
+        else if (selectedTarget.IsValid && !remoteTarget.IsValid)
+        {
+            lines.Add($"狀態：目前選取的 repository 尚未連結為本機 {info.RemoteName} remote。");
+        }
+        else if (selectedTarget.IsValid)
+        {
+            lines.Add($"狀態：本機 {info.RemoteName} remote 與目前選取的 repository 一致。");
+        }
+        else if (remoteTarget.IsValid)
+        {
+            lines.Add($"狀態：請填入 {selectedTarget.PlatformLabel} repository URL；本機 {info.RemoteName} remote 目前是 {remoteTarget.PlatformLabel}。");
+        }
+        else
+        {
+            lines.Add("狀態：尚未連結 repository。");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatRepositoryTarget(GitHubRepositoryTarget target) =>
+        target.IsValid
+            ? $"{target.PlatformLabel}：{target.Owner}/{target.Repository}"
+            : $"{target.PlatformLabel}：尚未填入 repository URL";
+
+    private static string FormatRepositoryRemote(string? remoteUrl, GitHubRepositoryTarget remoteTarget, string remoteName) =>
+        remoteTarget.IsValid
+            ? $"{remoteTarget.PlatformLabel}：{remoteTarget.Owner}/{remoteTarget.Repository} ({remoteUrl})"
+            : string.IsNullOrWhiteSpace(remoteUrl) ? $"（無 {remoteName} remote）" : remoteUrl;
+
+    private void UpdateLocalRepositorySummary(GitHubRepositoryTarget configuredTarget)
+    {
+        if (!_project.HasProject || _lastRemoteInfo is null)
+            return;
+
+        var remoteTarget = GitHubService.ParseRepositoryTarget(_lastRemoteInfo.RemoteUrl);
+        var selectedTarget = GitPlatformSelection.GetSelectedPlatformTarget(
+            SelectedGitPlatform,
+            configuredTarget,
+            remoteTarget);
+
+        HostingPlatformLabel = selectedTarget.PlatformLabel;
+        IsGitHubRemote = GitPlatformSelection.ShouldUseGitHubPagesApi(
+            SelectedGitPlatform,
+            selectedTarget,
+            remoteTarget);
+        RemoteSummary = BuildRemoteSummary(_lastRemoteInfo, selectedTarget, remoteTarget);
+
+        if (selectedTarget.IsValid && selectedTarget.Platform != GitHostingPlatform.GitHub)
+        {
+            PagesUrl = selectedTarget.PagesUrl ?? string.Empty;
+            PagesSummary = string.IsNullOrWhiteSpace(selectedTarget.PagesUrl)
+                ? $"{selectedTarget.PlatformLabel} repository 已選取；Pages／CI 部署需在平台端設定。"
+                : $"{selectedTarget.PlatformLabel} 建議網站網址：{selectedTarget.PagesUrl}（部署需在平台端設定）";
+            DeploymentStatus = "非 GitHub Actions 部署";
         }
     }
 

@@ -14,6 +14,9 @@ public interface ISettingsService
     void RemoveRecentProject(string path);
     void SetAutoOpenLastProject(bool enabled);
     void SetMarkdownEditorMode(string mode);
+    void SetSelectedGitPlatform(string platform);
+    string GetRepositoryUrl(string platform);
+    void SetRepositoryUrl(string platform, string url);
     string? GetAutoOpenProjectPath();
     IReadOnlyList<string> GetExistingRecentProjects();
 }
@@ -116,6 +119,21 @@ public sealed class SettingsService : ISettingsService
         Save();
     }
 
+    public void SetSelectedGitPlatform(string platform)
+    {
+        _settings.SelectedGitPlatform = platform;
+        Save();
+    }
+
+    public string GetRepositoryUrl(string platform) =>
+        _settings.RepositoryUrls.TryGetValue(platform, out var url) ? url : string.Empty;
+
+    public void SetRepositoryUrl(string platform, string url)
+    {
+        _settings.RepositoryUrls[platform] = url?.Trim() ?? string.Empty;
+        Save();
+    }
+
     public string? GetAutoOpenProjectPath()
     {
         if (!IsAutoOpenLastProjectEnabled)
@@ -166,6 +184,11 @@ public sealed class SettingsService : ISettingsService
     private void Normalize()
     {
         _settings.RecentProjects ??= [];
+        _settings.RepositoryUrls = new Dictionary<string, string>(
+            _settings.RepositoryUrls ?? new Dictionary<string, string>(),
+            StringComparer.OrdinalIgnoreCase);
+        if (!SupportedGitPlatforms.Contains(_settings.SelectedGitPlatform, StringComparer.OrdinalIgnoreCase))
+            _settings.SelectedGitPlatform = "GitHub";
 
         var normalized = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -211,4 +234,7 @@ public sealed class SettingsService : ISettingsService
             return path.Trim();
         }
     }
+
+    private static readonly string[] SupportedGitPlatforms =
+        ["GitHub", "GitLab", "Codeberg", "Bitbucket"];
 }

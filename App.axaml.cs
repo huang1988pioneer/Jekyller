@@ -43,12 +43,12 @@ public partial class App : Application
             };
 
             var home = new HomeViewModel(project, dialogs, jekyll, settings);
-            var setup = new SetupViewModel(environment, jekyll, dialogs, project, github);
+            var setup = new SetupViewModel(environment, jekyll, dialogs, project, github, settings);
             var configVm = new ConfigViewModel(config, project, dialogs);
             var themeVm = new ThemeViewModel(themes, config, chirpy, project, dialogs);
             var contentVm = new ContentViewModel(content, project, dialogs, frontMatter, settings);
             var previewVm = new PreviewViewModel(_serve, project, dialogs);
-            var githubVm = new GitHubViewModel(github, jekyll, project, dialogs, deploymentMonitor);
+            var githubVm = new GitHubViewModel(github, jekyll, project, dialogs, deploymentMonitor, settings);
 
             var autoOpenPath = settings.GetAutoOpenProjectPath();
             if (!string.IsNullOrWhiteSpace(autoOpenPath))
