@@ -6,6 +6,8 @@ Avalonia 桌面應用：一站式 Jekyll 工具，方便：
 - **編輯站台設定** `_config.yml`（常用欄位 + 原始 YAML）
 - **安裝與設定 Themes**（Chirpy、Minima、Minimal Mistakes、Cayman…）
 - **編輯 Markdown 內容**（posts / pages）
+- **匯出文章**為相容的 **Hugo** / **Hexo** Markdown
+- **網站遷移**：Hugo / Hexo → Jekyll，以及 Jekyll → Hugo / Hexo
 - **上傳到 GitHub** 並 **查詢 / 啟用 GitHub Pages 狀態**
 
 ## 需求
@@ -27,8 +29,9 @@ dotnet run
 1. **環境建立** → 檢查工具 → 必要時安裝 Jekyll / Bundler → `jekyll new` 建立站台  
 2. **主題 Themes** → 安裝 **Chirpy**（或其它主題）  
 3. **站台設定** → 填寫 `title` / `url` / `baseurl` 等  
-4. **內容 Markdown** → 建立文章與頁面  
-5. **GitHub Pages** → 建立 repo 並推送 → 啟用 Pages → 查詢狀態  
+4. **內容 Markdown** → 建立文章與頁面；可把單篇或整站匯出成 Hugo / Hexo  
+5. **網站遷移** → 從 Hugo 或 Hexo 轉入 Jekyll，或把 Jekyll 站台轉成 Hugo / Hexo  
+6. **GitHub Pages** → 建立 repo 並推送 → 啟用 Pages → 查詢狀態  
 
 ## 專案結構
 

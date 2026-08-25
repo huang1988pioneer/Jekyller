@@ -1,0 +1,81 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jekyller.ViewModels"
+             x:Class="Jekyller.Views.MigrationView"
+             x:DataType="vm:MigrationViewModel">
+  <Grid RowDefinitions="*,Auto" Margin="8">
+    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="12" MaxWidth="980">
+        <TextBlock Text="網站遷移" FontSize="22" FontWeight="Bold" />
+        <TextBlock Text="從 Hugo 或 Hexo 遷移至 Jekyll，或把 Jekyll 站台轉成相容的 Hugo / Hexo 專案。會轉換文章 front matter、檔名與靜態檔；主題與佈景需在目標引擎另外安裝。"
+                   Opacity="0.75" TextWrapping="Wrap" />
+
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="來源站台" Classes="sectionTitle" />
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+              <TextBlock Text="資料夾" VerticalAlignment="Center" />
+              <TextBox Grid.Column="1" Text="{Binding SourcePath}"
+                       PlaceholderText="選擇 Hugo、Hexo 或 Jekyll 站台根目錄" />
+              <Button Grid.Column="2" Content="瀏覽…" Command="{Binding BrowseSourceCommand}"
+                      IsEnabled="{Binding !IsBusy}" />
+              <Button Grid.Column="3" Content="使用目前專案" Command="{Binding UseCurrentProjectCommand}"
+                      IsEnabled="{Binding !IsBusy}" />
+            </Grid>
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Content="重新偵測" Command="{Binding DetectSourceCommand}"
+                      IsEnabled="{Binding !IsBusy}" />
+              <TextBlock Text="{Binding SourceKindLabel}" Classes="muted" VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="遷移方向" Classes="sectionTitle" />
+            <ComboBox ItemsSource="{Binding Directions}" SelectedItem="{Binding SelectedDirection}"
+                      HorizontalAlignment="Left" MinWidth="220" />
+            <TextBlock Text="Hugo / Hexo → Jekyll 會產生 _posts、_config.yml 與 Gemfile。Jekyll → Hugo 會寫入 content/posts 與 hugo.toml；Jekyll → Hexo 會寫入 source/_posts 與 Hexo _config.yml。"
+                       Classes="caption" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="目標資料夾" Classes="sectionTitle" />
+            <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+              <TextBlock Text="父資料夾" VerticalAlignment="Center" />
+              <TextBox Grid.Column="1" Text="{Binding DestParent}" />
+              <Button Grid.Column="2" Content="瀏覽…" Command="{Binding BrowseDestParentCommand}"
+                      IsEnabled="{Binding !IsBusy}" />
+
+              <TextBlock Grid.Row="1" Text="資料夾名稱" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding DestName}" />
+            </Grid>
+            <TextBlock Text="{Binding DestPathDisplay}" Classes="muted" TextWrapping="Wrap" />
+            <CheckBox Content="遷移成 Jekyll 後開啟為目前專案"
+                      IsChecked="{Binding OpenAfterMigrate}"
+                      IsVisible="{Binding CanOpenAfterMigrate}" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="開始遷移" Classes="accent" Command="{Binding MigrateCommand}"
+                      IsEnabled="{Binding CanMigrate}" />
+            </StackPanel>
+            <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Opacity="0.85" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="1" Classes="card" Margin="0,12,0,0">
+      <DockPanel MaxWidth="980">
+        <TextBlock DockPanel.Dock="Top" Text="輸出日誌" Classes="sectionTitle" Margin="0,0,0,6" />
+        <TextBox Text="{Binding Log}" IsReadOnly="True" AcceptsReturn="True"
+                 Classes="logBox"
+                 Height="180"
+                 TextWrapping="Wrap" FontFamily="Consolas,Courier New,monospace"
+                 VerticalContentAlignment="Top" />
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>

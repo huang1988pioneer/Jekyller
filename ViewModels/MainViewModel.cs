@@ -29,6 +29,7 @@ public partial class MainViewModel : ViewModelBase
         ThemeViewModel theme,
         ContentViewModel content,
         PreviewViewModel preview,
+        MigrationViewModel migration,
         GitHubViewModel github)
     {
         _project = project;
@@ -38,6 +39,7 @@ public partial class MainViewModel : ViewModelBase
         NavItems.Add(new NavItem("站台設定", "📝", config));
         NavItems.Add(new NavItem("主題 Themes", "🎨", theme));
         NavItems.Add(new NavItem("內容 Markdown", "📄", content));
+        NavItems.Add(new NavItem("網站遷移", "🔄", migration));
         NavItems.Add(new NavItem("本機預覽", "👁", preview));
         NavItems.Add(new NavItem("Git 平台 / Pages", "🚀", github));
 

@@ -11,7 +11,7 @@
         <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
             <StackPanel Spacing="8">
                 <TextBlock Text="內容 Markdown" Classes="pageTitle"/>
-                <TextBlock Text="編輯 Jekyll 文章、頁面與 Chirpy 導覽頁。WYSIWYG 與原始碼可切換，右側即時對應預覽。Front matter 請用上方欄位，不要在正文裡改 YAML。"
+                <TextBlock Text="編輯 Jekyll 文章、頁面與 Chirpy 導覽頁。可把本篇或整站匯出成 Hugo / Hexo 相容 Markdown。Front matter 請用上方欄位，不要在正文裡改 YAML。"
                            Classes="muted" TextWrapping="Wrap"/>
             </StackPanel>
             <TextBlock Grid.Column="1" Text="{Binding ContentSummary}" Classes="muted"
@@ -108,6 +108,23 @@
                             <Button Content="刪除" Command="{Binding DeleteSelectedCommand}"
                                     IsEnabled="{Binding HasSelection}"/>
                         </StackPanel>
+                        <TextBlock Text="匯出相容格式" Classes="caption" Margin="0,4,0,0"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                            <Button Content="本篇 Hugo" Command="{Binding ExportSelectedHugoCommand}"
+                                    IsEnabled="{Binding HasSelection}"
+                                    ToolTip.Tip="把目前文章存成 Hugo 相容的 Markdown（YAML front matter）"/>
+                            <Button Grid.Column="1" Content="本篇 Hexo"
+                                    Command="{Binding ExportSelectedHexoCommand}"
+                                    IsEnabled="{Binding HasSelection}"
+                                    ToolTip.Tip="把目前文章存成 Hexo 相容的 Markdown"/>
+                        </Grid>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                            <Button Content="全部→Hugo" Command="{Binding ExportAllHugoCommand}"
+                                    ToolTip.Tip="把整個 Jekyll 站台遷移成 Hugo（content/posts、hugo.toml）"/>
+                            <Button Grid.Column="1" Content="全部→Hexo"
+                                    Command="{Binding ExportAllHexoCommand}"
+                                    ToolTip.Tip="把整個 Jekyll 站台遷移成 Hexo（source/_posts）"/>
+                        </Grid>
                     </StackPanel>
                     <Grid>
                         <ListBox ItemsSource="{Binding Files}"

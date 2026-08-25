@@ -46,6 +46,27 @@ Assert(mixedDocument.Fields["title"] == "Outer", "Outer title must win when clea
 Assert(mixedDocument.Fields["date"] == "2026-08-23 10:00:00 +08:00", "Inner date should be recovered.");
 Assert(mixedDocument.Body.Trim() == "Ox Alpha", "Duplicated front matter must be stripped from body.");
 
+var hexoLists = """
+---
+title: Hexo Post
+categories:
+  - news
+  - jekyll
+tags:
+- desktop
+- tools
+---
+
+正文
+""";
+var hexoDocument = service.Parse(hexoLists);
+Assert(hexoDocument.Fields["categories"].Contains("news", StringComparison.Ordinal)
+       && hexoDocument.Fields["categories"].Contains("jekyll", StringComparison.Ordinal),
+    "Hexo dash-list categories must flatten.");
+Assert(hexoDocument.Fields["tags"].Contains("desktop", StringComparison.Ordinal)
+       && hexoDocument.Fields["tags"].Contains("tools", StringComparison.Ordinal),
+    "Hexo dash-list tags must flatten, including unindented lists.");
+
 var previewBody = MarkdownPreviewService.StripFrontMatter(duplicated).Trim();
 Assert(previewBody == "Ox Alpha", $"Preview body should only contain Markdown content, got: {previewBody}");
 

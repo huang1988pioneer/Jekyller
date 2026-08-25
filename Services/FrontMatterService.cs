@@ -40,19 +40,20 @@ public sealed partial class FrontMatterService
         var fields = document.Fields;
         var orderedKeys = new[]
         {
-            "layout", "title", "date", "published", "categories", "tags",
-            "image", "description", "permalink", "icon", "order", "pin",
-            "toc", "comments", "math", "mermaid", "slug", "draft"
+            "layout", "title", "date", "published", "draft", "categories", "tags",
+            "image", "images", "cover", "description", "permalink", "url",
+            "icon", "order", "pin", "toc", "comments", "math", "mermaid", "slug"
         };
         var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var delimiter = document.Delimiter == "+++" ? "+++" : "---";
+        var flavor = document.Flavor;
         var output = new StringBuilder(delimiter).Append('\n');
 
         foreach (var key in orderedKeys)
-            AppendField(output, fields, key, emitted, delimiter);
+            AppendField(output, fields, key, emitted, delimiter, flavor);
 
         foreach (var key in fields.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-            AppendField(output, fields, key, emitted, delimiter);
+            AppendField(output, fields, key, emitted, delimiter, flavor);
 
         output.Append(delimiter).Append("\n\n");
         output.Append(document.Body.TrimStart('\r', '\n'));
@@ -87,7 +88,14 @@ public sealed partial class FrontMatterService
         {
             if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith('#')) continue;
 
+            var trimmed = line.Trim();
             var indented = line.StartsWith(' ') || line.StartsWith('\t');
+            if (nestedParent is not null && trimmed.StartsWith("- "))
+            {
+                AppendListItem(fields, nestedParent, trimmed[2..].Trim());
+                continue;
+            }
+
             var separator = line.IndexOf(':');
             if (separator <= 0) continue;
 
@@ -138,20 +146,47 @@ public sealed partial class FrontMatterService
         }
     }
 
+    private static void AppendListItem(IDictionary<string, string> fields, string key, string rawItem)
+    {
+        foreach (var piece in SplitListItem(rawItem))
+        {
+            if (fields.TryGetValue(key, out var existing) && !string.IsNullOrWhiteSpace(existing))
+                fields[key] = existing + ", " + piece;
+            else
+                fields[key] = piece;
+        }
+    }
+
+    private static IEnumerable<string> SplitListItem(string item)
+    {
+        item = Unquote(item.Trim());
+        if (string.IsNullOrWhiteSpace(item))
+            return [];
+        if (item.StartsWith('[') && item.EndsWith(']'))
+            item = item[1..^1];
+        return item.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(Unquote)
+            .Where(piece => piece.Length > 0);
+    }
+
     private static void AppendField(
         StringBuilder output,
         IReadOnlyDictionary<string, string> fields,
         string key,
         ISet<string> emitted,
-        string delimiter)
+        string delimiter,
+        FrontMatterFlavor flavor)
     {
         if (key.Contains('.', StringComparison.Ordinal))
+            return;
+
+        if (ShouldOmit(key, flavor))
             return;
 
         if (key.Equals("image", StringComparison.OrdinalIgnoreCase))
         {
             if (!emitted.Add(key)) return;
-            AppendImageField(output, fields);
+            AppendImageField(output, fields, flavor);
             return;
         }
 
@@ -176,7 +211,10 @@ public sealed partial class FrontMatterService
             return;
         }
 
-        if (key.Equals("categories", StringComparison.OrdinalIgnoreCase) || key.Equals("tags", StringComparison.OrdinalIgnoreCase))
+        if (key.Equals("categories", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("tags", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("images", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("photos", StringComparison.OrdinalIgnoreCase))
         {
             var values = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Select(Quote).ToArray();
@@ -201,7 +239,10 @@ public sealed partial class FrontMatterService
             return;
         }
 
-        if (key.Equals("categories", StringComparison.OrdinalIgnoreCase) || key.Equals("tags", StringComparison.OrdinalIgnoreCase))
+        if (key.Equals("categories", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("tags", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("images", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("photos", StringComparison.OrdinalIgnoreCase))
         {
             var values = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Select(Quote).ToArray();
@@ -218,13 +259,39 @@ public sealed partial class FrontMatterService
         output.AppendLine($"{key} = {Quote(value)}");
     }
 
-    private static void AppendImageField(StringBuilder output, IReadOnlyDictionary<string, string> fields)
+    private static bool ShouldOmit(string key, FrontMatterFlavor flavor) => flavor switch
+    {
+        FrontMatterFlavor.Hugo =>
+            key.Equals("layout", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("published", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("permalink", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("icon", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("order", StringComparison.OrdinalIgnoreCase),
+        FrontMatterFlavor.Hexo =>
+            key.Equals("layout", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("draft", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("url", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("icon", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("order", StringComparison.OrdinalIgnoreCase),
+        _ => false
+    };
+
+    private static void AppendImageField(
+        StringBuilder output,
+        IReadOnlyDictionary<string, string> fields,
+        FrontMatterFlavor flavor)
     {
         var path = fields.TryGetValue("image.path", out var nested) && !string.IsNullOrWhiteSpace(nested)
             ? nested
             : fields.TryGetValue("image", out var flat) ? flat : string.Empty;
         if (string.IsNullOrWhiteSpace(path))
             return;
+
+        if (flavor != FrontMatterFlavor.Jekyll)
+        {
+            output.AppendLine($"image: {Quote(path.Trim())}");
+            return;
+        }
 
         output.AppendLine("image:");
         output.AppendLine($"  path: {Quote(path.Trim())}");
@@ -260,9 +327,17 @@ public sealed partial class FrontMatterService
     private static partial Regex TomlAssignmentRegex();
 }
 
+public enum FrontMatterFlavor
+{
+    Jekyll,
+    Hugo,
+    Hexo
+}
+
 public sealed class FrontMatterDocument
 {
     public Dictionary<string, string> Fields { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public string Body { get; set; } = string.Empty;
-    public string Delimiter { get; init; } = "---";
+    public string Delimiter { get; set; } = "---";
+    public FrontMatterFlavor Flavor { get; set; } = FrontMatterFlavor.Jekyll;
 }

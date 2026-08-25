@@ -7,7 +7,7 @@
   <ScrollViewer>
     <StackPanel Spacing="16" Margin="8">
       <TextBlock Text="Jekyller" FontSize="28" FontWeight="Bold" />
-      <TextBlock Text="一鍵建立 Jekyll · Chirpy 表單設定 · Markdown 預覽 · jekyll serve · GitHub Pages"
+      <TextBlock Text="一鍵建立 Jekyll · Markdown 編輯 · 匯出 Hugo / Hexo · 網站遷移 · jekyll serve · GitHub Pages"
                  Opacity="0.75" TextWrapping="Wrap" />
 
       <Border Classes="card" Padding="16" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
@@ -103,6 +103,12 @@
           <StackPanel Spacing="6">
             <TextBlock Text="🚀 GitHub Pages" FontWeight="SemiBold" />
             <TextBlock Text="建立 repo、推送、啟用 Pages；本機沒有網站時，也可從 GitHub Pages 複製下來" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="🔄 網站遷移" FontWeight="SemiBold" />
+            <TextBlock Text="從 Hugo / Hexo 轉成 Jekyll，或把 Jekyll 文章與整站匯出成相容的 Hugo / Hexo 專案" TextWrapping="Wrap" Opacity="0.8" FontSize="12" />
           </StackPanel>
         </Border>
         <Border Margin="4" Padding="14" CornerRadius="10" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">

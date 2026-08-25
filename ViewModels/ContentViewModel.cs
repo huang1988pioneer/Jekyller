@@ -15,6 +15,7 @@ public partial class ContentViewModel : ViewModelBase
     private readonly IDialogService _dialogs;
     private readonly FrontMatterService _frontMatter;
     private readonly ISettingsService _settings;
+    private readonly ISiteMigrationService _migration;
     private readonly IdleAutoSave _autoSave;
     private bool _loading;
     private bool _syncingFrontMatter;
@@ -26,13 +27,15 @@ public partial class ContentViewModel : ViewModelBase
         IProjectContext project,
         IDialogService dialogs,
         FrontMatterService frontMatter,
-        ISettingsService settings)
+        ISettingsService settings,
+        ISiteMigrationService migration)
     {
         _content = content;
         _project = project;
         _dialogs = dialogs;
         _frontMatter = frontMatter;
         _settings = settings;
+        _migration = migration;
 
         _autoSave = new IdleAutoSave(
             () => IsDirty && SelectedFile is { IsDirectory: false },
@@ -694,6 +697,100 @@ public partial class ContentViewModel : ViewModelBase
         catch (Exception ex)
         {
             StatusMessage = ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private Task ExportSelectedHugoAsync() => ExportSelectedAsync(StaticSiteKind.Hugo);
+
+    [RelayCommand]
+    private Task ExportSelectedHexoAsync() => ExportSelectedAsync(StaticSiteKind.Hexo);
+
+    [RelayCommand]
+    private Task ExportAllHugoAsync() => ExportAllAsync(StaticSiteKind.Hugo);
+
+    [RelayCommand]
+    private Task ExportAllHexoAsync() => ExportAllAsync(StaticSiteKind.Hexo);
+
+    private async Task ExportSelectedAsync(StaticSiteKind target)
+    {
+        if (!await RequireProjectAsync()) return;
+        if (SelectedFile is null || SelectedFile.IsDirectory)
+        {
+            StatusMessage = "請先選擇文章";
+            return;
+        }
+
+        var name = StaticSiteDetector.DisplayName(target);
+        try
+        {
+            var converted = ArticleFormatConverter.Convert(
+                EditorText,
+                SelectedFile.FullPath,
+                SelectedFile.RelativePath,
+                SelectedFile.Kind,
+                StaticSiteKind.Jekyll,
+                target);
+            var path = await DialogHelper.PickSaveFileAsync(
+                $"匯出為 {name} Markdown",
+                converted.FileName);
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            await File.WriteAllTextAsync(path, converted.Markdown, new System.Text.UTF8Encoding(false));
+            StatusMessage = $"已匯出 {name} 文章：{path}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"匯出失敗：{ex.Message}";
+        }
+    }
+
+    private async Task ExportAllAsync(StaticSiteKind target)
+    {
+        if (!await RequireProjectAsync()) return;
+
+        var name = StaticSiteDetector.DisplayName(target);
+        var folder = await _dialogs.PickFolderAsync($"選擇 {name} 匯出資料夾").ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(folder))
+            return;
+
+        var source = _project.ProjectPath!;
+        if (string.Equals(Path.GetFullPath(source), Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase))
+        {
+            await _dialogs.ShowMessageAsync("無法匯出", "請選擇不同於目前 Jekyll 專案的資料夾。")
+                .ConfigureAwait(true);
+            return;
+        }
+
+        if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any())
+        {
+            var ok = await _dialogs.ConfirmAsync(
+                "資料夾不是空的",
+                $"會把 Jekyll 站台遷移成 {name} 並寫入 {folder}。仍要繼續嗎？").ConfigureAwait(true);
+            if (!ok)
+                return;
+        }
+
+        try
+        {
+            StatusMessage = $"正在匯出為 {name}…";
+            var result = await _migration.MigrateAsync(new SiteMigrationRequest
+            {
+                SourcePath = source,
+                DestinationPath = folder,
+                SourceKind = StaticSiteKind.Jekyll,
+                TargetKind = target
+            }).ConfigureAwait(true);
+            StatusMessage = result.Summary;
+            await _dialogs.ShowMessageAsync(
+                    result.Success ? $"已匯出為 {name}" : "匯出失敗",
+                    result.Summary)
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"匯出失敗：{ex.Message}";
         }
     }
 

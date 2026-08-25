@@ -77,11 +77,16 @@ public partial class HomeViewModel : ViewModelBase
         var folder = await _dialogs.PickFolderAsync("選擇 Jekyll 專案資料夾").ConfigureAwait(true);
         if (folder is null) return;
 
-        if (!_jekyll.LooksLikeJekyllSite(folder))
+        if (StaticSiteDetector.ProjectOpenWarning(folder) is { } warning)
+        {
+            var proceed = await _dialogs.ConfirmAsync(warning.Title, warning.Message).ConfigureAwait(true);
+            if (!proceed) return;
+        }
+        else if (!_jekyll.LooksLikeJekyllSite(folder))
         {
             var ok = await _dialogs.ConfirmAsync(
                 "看起來不像 Jekyll 專案",
-                "此資料夾未找到 _config.yml / _posts / Gemfile。仍要開啟嗎？").ConfigureAwait(true);
+                "此資料夾未找到 _config.yml / _posts / Gemfile。若這是 Hugo 或 Hexo 站台，請改用「網站遷移」。仍要開啟嗎？").ConfigureAwait(true);
             if (!ok) return;
         }
 

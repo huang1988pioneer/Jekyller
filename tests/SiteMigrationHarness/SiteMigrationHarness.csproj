@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Models\StaticSiteKind.cs" Link="Models\StaticSiteKind.cs" />
+    <Compile Include="..\..\Models\ContentFile.cs" Link="Models\ContentFile.cs" />
+    <Compile Include="..\..\Services\FrontMatterService.cs" Link="Services\FrontMatterService.cs" />
+    <Compile Include="..\..\Services\ArticleFormatConverter.cs" Link="Services\ArticleFormatConverter.cs" />
+    <Compile Include="..\..\Services\StaticSiteDetector.cs" Link="Services\StaticSiteDetector.cs" />
+    <Compile Include="..\..\Services\SiteMigrationService.cs" Link="Services\SiteMigrationService.cs" />
+  </ItemGroup>
+</Project>

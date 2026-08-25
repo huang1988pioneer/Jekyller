@@ -34,6 +34,25 @@ public static class DialogHelper
         return files.Count > 0 ? files[0] : null;
     }
 
+    public static async Task<string?> PickSaveFileAsync(
+        string title,
+        string suggestedFileName,
+        IReadOnlyList<FilePickerFileType>? types = null)
+    {
+        var window = GetMainWindow();
+        if (window is null) return null;
+
+        var file = await window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = title,
+            SuggestedFileName = suggestedFileName,
+            DefaultExtension = "md",
+            FileTypeChoices = types ?? [Markdown]
+        }).ConfigureAwait(true);
+
+        return file?.TryGetLocalPath();
+    }
+
     public static async Task<IReadOnlyList<string>> PickFilesAsync(
         string title,
         IReadOnlyList<FilePickerFileType>? types = null,
@@ -87,5 +106,10 @@ public static class DialogHelper
     public static FilePickerFileType AllFiles { get; } = new("所有檔案")
     {
         Patterns = ["*.*"]
+    };
+
+    public static FilePickerFileType Markdown { get; } = new("Markdown")
+    {
+        Patterns = ["*.md", "*.markdown"]
     };
 }

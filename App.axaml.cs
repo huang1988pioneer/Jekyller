@@ -32,6 +32,7 @@ public partial class App : Application
             var themes = new ThemeService(process, config);
             var content = new ContentService();
             var frontMatter = new FrontMatterService();
+            var migration = new SiteMigrationService();
             var deploymentMonitor = new DeploymentMonitorService();
             var github = new GitHubService(process, config, deploymentMonitor);
             _serve = new JekyllServeService();
@@ -46,15 +47,16 @@ public partial class App : Application
             var setup = new SetupViewModel(environment, jekyll, dialogs, project, github, settings);
             var configVm = new ConfigViewModel(config, project, dialogs);
             var themeVm = new ThemeViewModel(themes, config, chirpy, project, dialogs);
-            var contentVm = new ContentViewModel(content, project, dialogs, frontMatter, settings);
+            var contentVm = new ContentViewModel(content, project, dialogs, frontMatter, settings, migration);
             var previewVm = new PreviewViewModel(_serve, project, dialogs);
+            var migrationVm = new MigrationViewModel(migration, project, dialogs);
             var githubVm = new GitHubViewModel(github, jekyll, project, dialogs, deploymentMonitor, settings);
 
             var autoOpenPath = settings.GetAutoOpenProjectPath();
             if (!string.IsNullOrWhiteSpace(autoOpenPath))
                 project.SetProject(autoOpenPath);
 
-            var main = new MainViewModel(project, home, setup, configVm, themeVm, contentVm, previewVm, githubVm);
+            var main = new MainViewModel(project, home, setup, configVm, themeVm, contentVm, previewVm, migrationVm, githubVm);
 
             desktop.MainWindow = new MainWindow
             {

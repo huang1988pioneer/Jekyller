@@ -113,14 +113,5 @@ public sealed class JekyllService(IProcessRunner processRunner) : IJekyllService
             .ConfigureAwait(false);
     }
 
-    public bool LooksLikeJekyllSite(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
-            return false;
-
-        return File.Exists(Path.Combine(path, "_config.yml"))
-               || File.Exists(Path.Combine(path, "_config.yaml"))
-               || Directory.Exists(Path.Combine(path, "_posts"))
-               || File.Exists(Path.Combine(path, "Gemfile"));
-    }
+    public bool LooksLikeJekyllSite(string path) => StaticSiteDetector.LooksLikeJekyll(path);
 }
