@@ -31,7 +31,7 @@
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel Spacing="3">
               <TextBlock Text="從 Git 平台複製到本機" Classes="sectionTitle" />
-              <TextBlock Text="可貼 GitHub、GitLab、Codeberg、Bitbucket repository 網址；GitHub 也接受 Pages 網址並可列出帳號中的 Pages 網站。"
+              <TextBlock Text="可貼 GitHub、GitLab、Codeberg、Bitbucket 的 repository 或 Pages 網址。GitHub 還可列出帳號中已上線的網站。"
                          Classes="caption" TextWrapping="Wrap" />
             </StackPanel>
             <Border Grid.Column="1" Classes="pill" Padding="10,4" VerticalAlignment="Top" Background="#1B3D38">
@@ -63,11 +63,16 @@
                        Opacity="0.85" LineHeight="20" />
           </Border>
 
-          <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding IsGitHubPlatformSelected}">
+          <Grid ColumnDefinitions="*,Auto">
             <StackPanel Spacing="6" VerticalAlignment="Center">
               <Button Content="列出我的 GitHub Pages 網站" Command="{Binding ListPagesSitesCommand}"
-                      IsEnabled="{Binding !IsBusy}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding PagesSitesMessage}" Classes="caption" TextWrapping="Wrap" />
+                      IsEnabled="{Binding !IsBusy}" HorizontalAlignment="Left"
+                      IsVisible="{Binding IsGitHubPlatformSelected}" />
+              <TextBlock Text="{Binding PagesSitesMessage}" Classes="caption" TextWrapping="Wrap"
+                         IsVisible="{Binding IsGitHubPlatformSelected}" />
+              <TextBlock Text="貼上目前平台的 repository 或 Pages 網址後，即可複製到本機並開啟。"
+                         Classes="caption" TextWrapping="Wrap"
+                         IsVisible="{Binding !IsGitHubPlatformSelected}" />
             </StackPanel>
             <Button Grid.Column="1" Content="複製到本機並開啟"
                     Classes="accent" Command="{Binding CloneFromGitHubCommand}"
@@ -112,7 +117,7 @@
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel Spacing="3">
               <TextBlock Text="連結既有 Repository" Classes="sectionTitle" />
-              <TextBlock Text="貼上四種支援平台的 repository 網址，安全合併遠端內容後推送；GitHub 會繼續設定 Actions Pages。"
+              <TextBlock Text="貼上四種支援平台的 repository 網址後推送：GitHub 用 Actions Pages、GitLab 寫入 CI、Codeberg 推 pages 分支、Bitbucket 推 workspace.bitbucket.io 靜態站。"
                          Classes="caption" TextWrapping="Wrap" />
             </StackPanel>
             <Border Grid.Column="1" Classes="pill" Padding="10,4" VerticalAlignment="Top">
@@ -198,32 +203,43 @@
         </Grid>
       </Border>
 
+      <Border Classes="card" IsVisible="{Binding HasLocalProject}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="建置並同步目前平台" Classes="sectionTitle" />
+          <Grid ColumnDefinitions="120,*">
+            <TextBlock Text="Commit 訊息" VerticalAlignment="Center" />
+            <TextBox Grid.Column="1" Text="{Binding CommitMessage}" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="建置、提交並推送更新" Classes="accent" Command="{Binding PushCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+            <Button Content="Pull" Command="{Binding PullCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+          </StackPanel>
+          <TextBlock Classes="caption" TextWrapping="Wrap" Text="{Binding PushToolsCaption}" />
+        </StackPanel>
+      </Border>
+
       <Border Classes="card" IsVisible="{Binding CanShowGitHubProjectTools}">
         <StackPanel Spacing="12">
           <TextBlock Text="建立新的 GitHub Repository（GitHub 專用）" Classes="sectionTitle" />
-          <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto">
+          <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto">
             <TextBlock Text="Repo 名稱" VerticalAlignment="Center" Margin="0,0,0,8" />
             <TextBox Grid.Column="1" Text="{Binding RepoName}"
                      PlaceholderText="my-jekyll-site（只填新 repository 名稱）" Margin="0,0,0,8" />
-            <TextBlock Grid.Row="1" Text="可見性" VerticalAlignment="Center" Margin="0,0,0,8" />
+            <TextBlock Grid.Row="1" Text="可見性" VerticalAlignment="Center" />
             <CheckBox Grid.Row="1" Grid.Column="1" Content="建立為 Private repository"
-                      IsChecked="{Binding IsPrivate}" Margin="0,0,0,8" />
-            <TextBlock Grid.Row="2" Text="Commit 訊息" VerticalAlignment="Center" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CommitMessage}" />
+                      IsChecked="{Binding IsPrivate}" />
           </Grid>
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="建立新 Repo + 推送 + 啟用 Pages" Classes="accent"
                     Command="{Binding CreateAndDeployCommand}"
                     IsEnabled="{Binding !IsBusy}" />
-            <Button Content="建置、提交並推送更新" Command="{Binding PushCommand}"
-                    IsEnabled="{Binding !IsBusy}" />
-            <Button Content="Pull" Command="{Binding PullCommand}"
-                    IsEnabled="{Binding !IsBusy}" />
           </StackPanel>
           <TextBlock Classes="caption" TextWrapping="Wrap"
                      Text="若 GitHub 上已有同名 repository，且是 Jekyll 網站（或空的／只有 README），會改走「連結既有」：保留遠端內容、衝突即停、不 force push。名稱被其他專案占用時會拒絕建立。" />
           <TextBlock Classes="caption" TextWrapping="Wrap"
-                     Text="新 repository 流程：本機 Jekyll production build → 寫入 .github/workflows/jekyll.yml（若尚無 Pages workflow）→ git commit/push → GitHub Actions 以 Bundler 建置並部署。建置失敗時不會推送；請先 gh auth login。Chirpy starter 若已有 pages-deploy.yml 則不會重複建立。" />
+                     Text="新 repository 流程：本機 Jekyll production build → 寫入 .github/workflows/jekyll.yml（若尚無 Pages workflow）→ git commit/push → GitHub Actions 以 Bundler 建置並部署。建置失敗時不會推送；請先 gh auth login。Chirpy starter 若已有 pages-deploy.yml 則不會重複建立。GitLab、Codeberg、Bitbucket 請先在平台建立 repository，再用上方「連結既有」。" />
         </StackPanel>
       </Border>
 

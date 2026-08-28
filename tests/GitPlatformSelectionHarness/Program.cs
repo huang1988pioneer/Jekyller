@@ -101,6 +101,21 @@ Assert(PagesAccessStatus.TryCreateProtectedSiteMessage(
     "GitLab Pages auth redirects should be classified as protected site access");
 Assert(authRedirectMessage.Contains("導向 GitLab Pages 驗證", StringComparison.Ordinal),
     "GitLab Pages auth redirects should explain the GitLab Pages access-control state");
+Assert(authRedirectMessage.Contains("Everyone With Access", StringComparison.Ordinal),
+    "GitLab Pages auth redirects should name the Everyone With Access setting");
+Assert(authRedirectMessage.Contains("Settings > Pages", StringComparison.Ordinal),
+    "GitLab Pages auth redirects should point to Settings > Pages");
+Assert(authRedirectMessage.Contains("不到 1 分鐘", StringComparison.Ordinal),
+    "GitLab Pages auth redirects should mention the Pages cache delay");
+
+Assert(PagesAccessStatus.GitLabDeployedMessage("https://group.gitlab.io/site/")
+        .Contains("Everyone With Access", StringComparison.Ordinal),
+    "GitLab deploy follow-up should explain Everyone With Access");
+Assert(PagesAccessStatus.WithGitLabCacheHint(
+            "https://group.gitlab.io/site/",
+            "線上網站仍是上一版本；尚未找到最新部署標記。")
+        .Contains("不到 1 分鐘", StringComparison.Ordinal),
+    "GitLab deployment monitoring should mention Pages cache when the site is still previous");
 
 Assert(PagesAccessStatus.TryCreateProtectedSiteMessage(
         HttpStatusCode.Unauthorized,
@@ -109,6 +124,8 @@ Assert(PagesAccessStatus.TryCreateProtectedSiteMessage(
     "HTTP 401 should be classified as protected site access");
 Assert(unauthorizedMessage.Contains("HTTP 401", StringComparison.Ordinal),
     "HTTP 401 protected site messages should include the status code");
+Assert(unauthorizedMessage.Contains("Everyone With Access", StringComparison.Ordinal),
+    "HTTP 401 GitLab Pages messages should name Everyone With Access");
 
 Assert(PagesAccessStatus.TryCreateProtectedSiteMessage(
         HttpStatusCode.Forbidden,
@@ -130,12 +147,49 @@ Assert(StaticPagesDeployment.ShouldPublishOutputBranch(codebergPagesTarget),
     "Codeberg Pages must publish the generated static output branch");
 Assert(StaticPagesDeployment.OutputBranchFor(GitHostingPlatform.Codeberg) == "pages",
     "Codeberg Pages output branch must be pages");
+Assert(StaticPagesDeployment.OutputBranchFor(codebergPagesTarget) == "pages",
+    "Codeberg Pages target output branch must be pages");
 Assert(!StaticPagesDeployment.ShouldPushSourceBranch(codebergPagesTarget),
     "Codeberg Pages must not require write access to the source main branch");
 Assert(!StaticPagesDeployment.ShouldPublishOutputBranch(gitLabTarget),
     "GitLab should keep the CI/source repository flow");
 Assert(StaticPagesDeployment.ShouldPushSourceBranch(gitLabTarget),
     "GitLab should keep pushing the source branch for CI");
+
+var bitbucketPagesTarget = new GitHubRepositoryTarget
+{
+    IsValid = true,
+    Platform = GitHostingPlatform.Bitbucket,
+    Owner = "fengtusama",
+    Repository = "fengtusama.bitbucket.io",
+    CanonicalUrl = "https://bitbucket.org/fengtusama/fengtusama.bitbucket.io.git",
+    IsUserOrOrganizationSite = true,
+    PagesUrl = "https://fengtusama.bitbucket.io/"
+};
+Assert(StaticPagesDeployment.ShouldPublishOutputBranch(bitbucketPagesTarget),
+    "Bitbucket workspace sites must publish generated static output");
+Assert(!StaticPagesDeployment.ShouldPushSourceBranch(bitbucketPagesTarget),
+    "Bitbucket workspace sites must not push Jekyll source to the live website repository");
+Assert(StaticPagesDeployment.OutputBranchFor(bitbucketPagesTarget) == "main",
+    "Bitbucket static websites publish to the default main branch");
+Assert(StaticPagesDeployment.TryValidateDeploymentTarget(bitbucketPagesTarget, out var bitbucketOk),
+    "a workspace.bitbucket.io repository is a valid Bitbucket static website target");
+Assert(string.IsNullOrWhiteSpace(bitbucketOk), "valid Bitbucket website targets should not include an error");
+
+var bitbucketProjectTarget = new GitHubRepositoryTarget
+{
+    IsValid = true,
+    Platform = GitHostingPlatform.Bitbucket,
+    Owner = "fengtusama",
+    Repository = "notes",
+    CanonicalUrl = "https://bitbucket.org/fengtusama/notes.git"
+};
+Assert(!StaticPagesDeployment.ShouldPublishOutputBranch(bitbucketProjectTarget),
+    "Bitbucket project repositories are not Cloud static websites");
+Assert(!StaticPagesDeployment.TryValidateDeploymentTarget(bitbucketProjectTarget, out var bitbucketError),
+    "Bitbucket project repositories must be rejected for Pages deployment");
+Assert(bitbucketError.Contains("bitbucket.io", StringComparison.OrdinalIgnoreCase),
+    "Bitbucket project-repository errors should name the required workspace.bitbucket.io repository");
 
 Assert(GitLabPagesCi.Configuration.Contains("image: ruby:3.3", StringComparison.Ordinal),
     "GitLab Pages CI must use Ruby for Jekyll");
@@ -144,18 +198,20 @@ Assert(GitLabPagesCi.Configuration.Contains("bundle exec jekyll build -d public"
 Assert(GitLabPagesCi.Configuration.Contains("pages:", StringComparison.Ordinal),
     "GitLab Pages CI must publish the public artifact as a Pages deployment");
 
-Assert(DeploymentMarkerFiles.PrimaryFileName == "hugoer-deployment.json",
-    "new deployments should use the current Hugoer product marker name");
+Assert(DeploymentMarkerFiles.PrimaryFileName == "jekyller-deployment.json",
+    "new deployments should use the current Jekyller product marker name");
 Assert(DeploymentMarkerFiles.ReadCandidates.SequenceEqual(
-        ["hugoer-deployment.json", "jekyller-deployment.json"]),
+        ["jekyller-deployment.json", "hugoer-deployment.json"]),
     "deployment monitoring should accept both the current and legacy marker names");
-Assert(DeploymentMarkerFiles.OutputFileNames.Contains("jekyller-deployment.json", StringComparer.OrdinalIgnoreCase),
+Assert(DeploymentMarkerFiles.OutputFileNames.Contains("hugoer-deployment.json", StringComparer.OrdinalIgnoreCase),
     "new static deployments should retain the legacy marker alias for existing monitors");
 var expectedMarkerPaths = DeploymentMarkerFiles.ExpectedMarkerPaths("C:\\site").ToArray();
-Assert(expectedMarkerPaths.Contains(Path.Combine("C:\\site", "static", "hugoer-deployment.json")),
-    "Hugo source marker should be discoverable from the static directory");
+Assert(expectedMarkerPaths.Contains(Path.Combine("C:\\site", "jekyller-deployment.json")),
+    "Jekyll source marker should be discoverable from the site root");
+Assert(expectedMarkerPaths.Contains(Path.Combine("C:\\site", "_site", "jekyller-deployment.json")),
+    "an already-built Jekyll marker should remain discoverable from _site output");
 Assert(expectedMarkerPaths.Contains(Path.Combine("C:\\site", "public", "hugoer-deployment.json")),
-    "an already-built Hugo marker should remain discoverable from public output");
+    "a legacy Hugoer marker should remain discoverable from public output");
 
 var outputRoot = Path.Combine(Path.GetTempPath(), "JekyllerStaticPagesDeploymentTests", Guid.NewGuid().ToString("N"));
 try
@@ -167,6 +223,15 @@ try
         "generated public output should be detected for Hugo sites");
     Assert(outputDir == publicDir, "public output directory should be preferred for Hugo sites");
     Assert(string.IsNullOrWhiteSpace(outputMessage), "output detection success should not include an error message");
+
+    var jekyllRoot = Path.Combine(outputRoot, "jekyll");
+    var siteDir = Path.Combine(jekyllRoot, "_site");
+    Directory.CreateDirectory(siteDir);
+    File.WriteAllText(Path.Combine(siteDir, "index.html"), "<!doctype html>");
+    Assert(StaticPagesDeployment.TryFindOutputDirectory(jekyllRoot, out var jekyllOutput, out var jekyllMessage),
+        "generated _site output should be detected for Jekyll sites");
+    Assert(jekyllOutput == siteDir, "_site output directory should be detected for Jekyll sites");
+    Assert(string.IsNullOrWhiteSpace(jekyllMessage), "Jekyll output detection success should not include an error message");
 }
 finally
 {

@@ -64,7 +64,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     public partial string CloneSiteName { get; set; } = string.Empty;
 
     [ObservableProperty]
-    public partial string CloneTargetSummary { get; set; } = "貼上 GitHub repository 或 Pages 網址，或從下方清單選擇已上線的網站。";
+    public partial string CloneTargetSummary { get; set; } = "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository / Pages 網址，或從下方清單選擇已上線的 GitHub 網站。";
 
     [ObservableProperty]
     public partial string PagesSitesMessage { get; set; } = "尚未開啟本機專案時，會自動列出你 GitHub 上已啟用 Pages 的網站。";
@@ -134,12 +134,26 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
 
     public bool CanShowGitHubProjectTools => HasLocalProject && IsGitHubPlatformSelected;
 
+    public string PushToolsCaption => SelectedGitPlatform switch
+    {
+        GitHostingPlatform.GitLab =>
+            "建置後提交並推送來源；GitLab Pages CI 會用 Ruby / Bundler 建置 Jekyll 並發布 public/。" +
+            "若 Settings > Pages 是 Everyone With Access，訪客需登入；要公開請改成 Everyone。GitLab 快取通常不到 1 分鐘。",
+        GitHostingPlatform.Codeberg =>
+            "建置後把 _site 推到 Codeberg 的 pages 分支。請在 Codeberg 設定 Pages Webhook；來源分支不會覆寫遠端。",
+        GitHostingPlatform.Bitbucket =>
+            "建置後把 _site 推到 <workspace>.bitbucket.io 的預設分支。Bitbucket Cloud 沒有專案層級 Pages。",
+        _ =>
+            "建置後提交並推送，由 GitHub Actions 部署 Pages。"
+    };
+
     public ObservableCollection<GitHubPagesSiteItem> PagesSites { get; } = [];
     public IReadOnlyList<GitHostingPlatform> GitPlatforms { get; } = Enum.GetValues<GitHostingPlatform>();
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsGitHubPlatformSelected))]
     [NotifyPropertyChangedFor(nameof(CanShowGitHubProjectTools))]
+    [NotifyPropertyChangedFor(nameof(PushToolsCaption))]
     public partial GitHostingPlatform SelectedGitPlatform { get; set; } = GitHostingPlatform.GitHub;
 
     public GitHubViewModel(
@@ -330,6 +344,12 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (!target.IsValid)
         {
             StatusMessage = target.ErrorMessage;
+            return;
+        }
+
+        if (target.Platform != SelectedGitPlatform)
+        {
+            StatusMessage = $"目前選擇 {SelectedGitPlatform}，但網址屬於 {target.PlatformLabel}。請切換平台或更正網址。";
             return;
         }
 
@@ -775,9 +795,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (selectedTarget.IsValid && selectedTarget.Platform != GitHostingPlatform.GitHub)
         {
             PagesUrl = selectedTarget.PagesUrl ?? string.Empty;
-            PagesSummary = string.IsNullOrWhiteSpace(selectedTarget.PagesUrl)
-                ? $"{selectedTarget.PlatformLabel} repository 已選取；Pages／CI 部署需在平台端設定。"
-                : $"{selectedTarget.PlatformLabel} 建議網站網址：{selectedTarget.PagesUrl}（部署需在平台端設定）";
+            PagesSummary = NonGitHubPagesSummary(selectedTarget);
             DeploymentStatus = "非 GitHub Actions 部署";
             if (updateStatusMessage) StatusMessage = PagesSummary;
             return;
@@ -1057,9 +1075,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (selectedTarget.IsValid && selectedTarget.Platform != GitHostingPlatform.GitHub)
         {
             PagesUrl = selectedTarget.PagesUrl ?? string.Empty;
-            PagesSummary = string.IsNullOrWhiteSpace(selectedTarget.PagesUrl)
-                ? $"{selectedTarget.PlatformLabel} repository 已選取；Pages／CI 部署需在平台端設定。"
-                : $"{selectedTarget.PlatformLabel} 建議網站網址：{selectedTarget.PagesUrl}（部署需在平台端設定）";
+            PagesSummary = NonGitHubPagesSummary(selectedTarget);
             DeploymentStatus = "非 GitHub Actions 部署";
         }
     }
@@ -1124,7 +1140,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
             AppendLog("已複製，但資料夾看起來不像 Jekyll 來源（缺少 _config.yml / Gemfile / _posts）。可能遠端是編譯後的 Pages 內容。");
             await _dialogs.ShowMessageAsync(
                 "已複製，但可能不是 Jekyll 來源",
-                "資料夾已複製到本機並開啟，但沒有找到典型的 Jekyll 檔案。若 GitHub Pages 只放了編譯後的 HTML，請改複製含 _config.yml 的來源分支。")
+                "資料夾已複製到本機並開啟，但沒有找到典型的 Jekyll 檔案。若遠端只放了編譯後的 HTML，請改複製含 _config.yml 的來源分支。")
                 .ConfigureAwait(true);
         }
 
@@ -1137,8 +1153,14 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (!target.IsValid)
         {
             CloneTargetSummary = string.IsNullOrWhiteSpace(RepositoryUrl)
-                ? "貼上 GitHub repository 或 Pages 網址，或從下方清單選擇已上線的網站。"
+                ? "貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository / Pages 網址，或從下方清單選擇已上線的 GitHub 網站。"
                 : target.ErrorMessage;
+            return;
+        }
+
+        if (target.Platform != SelectedGitPlatform)
+        {
+            CloneTargetSummary = $"目前選擇 {SelectedGitPlatform}，但網址屬於 {target.PlatformLabel}。請切換平台或更正網址。";
             return;
         }
 
@@ -1157,7 +1179,7 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
     private bool EnsureProject()
     {
         if (_project.HasProject) return true;
-        _ = _dialogs.ShowMessageAsync("提示", "請先開啟、建立專案，或從 GitHub Pages 複製到本機。");
+        _ = _dialogs.ShowMessageAsync("提示", "請先開啟、建立專案，或從 Git 平台複製到本機。");
         return false;
     }
 
@@ -1179,6 +1201,28 @@ public partial class GitHubViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(line)) return;
         var formatted = $"[{DateTime.Now:HH:mm:ss}] {line.Trim()}";
         Log = string.IsNullOrEmpty(Log) ? formatted : Log + Environment.NewLine + formatted;
+    }
+
+    private static string NonGitHubPagesSummary(GitHubRepositoryTarget target)
+    {
+        if (string.IsNullOrWhiteSpace(target.PagesUrl))
+        {
+            return target.Platform == GitHostingPlatform.Bitbucket
+                ? "Bitbucket Cloud 只支援 <workspace>.bitbucket.io 靜態網站。請改連該 repository。"
+                : $"{target.PlatformLabel} repository 已選取；Pages／CI 部署需在平台端設定。";
+        }
+
+        return target.Platform switch
+        {
+            GitHostingPlatform.GitLab =>
+                $"{target.PlatformLabel} 建議網站網址：{target.PagesUrl}（推送後由 GitLab Pages CI 建置；" +
+                "Settings > Pages 若是 Everyone With Access 需登入，公開請改 Everyone；快取通常不到 1 分鐘）",
+            GitHostingPlatform.Codeberg =>
+                $"{target.PlatformLabel} 建議網站網址：{target.PagesUrl}（會把 _site 推到 pages 分支；請在 Codeberg 設定 Pages Webhook）",
+            GitHostingPlatform.Bitbucket =>
+                $"{target.PlatformLabel} 建議網站網址：{target.PagesUrl}（會把 _site 推到預設分支）",
+            _ => $"{target.PlatformLabel} 建議網站網址：{target.PagesUrl}"
+        };
     }
 
     private static string PushCompletedStatusMessage(ProcessResult result)

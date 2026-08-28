@@ -96,6 +96,10 @@ public sealed partial class GitHubService : IGitHubService
         if (string.IsNullOrWhiteSpace(value))
             return InvalidTarget("請貼上 GitHub、GitLab、Codeberg 或 Bitbucket repository 網址。");
 
+        var convertedPagesUrl = GitHubPagesUrl.TryConvertToRepositoryUrl(value);
+        if (convertedPagesUrl is not null)
+            value = convertedPagesUrl;
+
         var ssh = GitSshRemoteRegex().Match(value);
         if (ssh.Success)
         {
@@ -103,12 +107,9 @@ public sealed partial class GitHubService : IGitHubService
         }
         else if (!value.Contains("://", StringComparison.Ordinal))
         {
-            if (value.Contains(".github.io", StringComparison.OrdinalIgnoreCase))
-                value = $"https://{value.TrimStart('/')}";
-            else
-                value = SupportedHosts.Any(host => value.StartsWith(host + "/", StringComparison.OrdinalIgnoreCase))
-                    ? $"https://{value}"
-                    : $"https://github.com/{value.TrimStart('/')}";
+            value = SupportedHosts.Any(host => value.StartsWith(host + "/", StringComparison.OrdinalIgnoreCase))
+                ? $"https://{value}"
+                : $"https://github.com/{value.TrimStart('/')}";
         }
 
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
@@ -118,12 +119,10 @@ public sealed partial class GitHubService : IGitHubService
             return InvalidTarget(UnsupportedRepositoryUrlMessage);
         }
 
-        var convertedPagesUrl = GitHubPagesUrl.TryConvertToRepositoryUrl(uri);
-        if (convertedPagesUrl is not null)
-            return ParseRepositoryTarget(convertedPagesUrl);
-
         if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            return InvalidTarget(UnsupportedRepositoryUrlMessage);
+        {
+            uri = new UriBuilder(uri) { Scheme = Uri.UriSchemeHttps, Port = -1 }.Uri;
+        }
 
         var platform = PlatformFromHost(uri.Host);
         if (platform is null)
@@ -139,6 +138,16 @@ public sealed partial class GitHubService : IGitHubService
 
         if (segments.Length < 2)
             return InvalidTarget("網址必須指向 repository 首頁，不可包含 issues、settings 等子路徑。");
+
+        if (platform == GitHostingPlatform.GitLab)
+        {
+            if (ContainsGitLabRepositorySubPath(segments))
+                return InvalidTarget("網址必須指向 repository 首頁，不可包含 issues、settings、-/tree 等子路徑。");
+        }
+        else if (segments.Length != 2)
+        {
+            return InvalidTarget("網址必須指向 repository 首頁，不可包含 issues、settings 等子路徑。");
+        }
 
         var owner = string.Join('/', segments[..^1].Select(Uri.UnescapeDataString));
         var repository = Uri.UnescapeDataString(segments[^1]);
@@ -190,7 +199,8 @@ public sealed partial class GitHubService : IGitHubService
         GitHostingPlatform platform = GitHostingPlatform.GitHub,
         CancellationToken cancellationToken = default)
     {
-        var remoteName = RemoteNameFor(platform);
+        var (remoteName, remoteUrl) = await ResolveRemoteAsync(projectPath, platform, cancellationToken)
+            .ConfigureAwait(false);
         var data = new GitRemoteInfo { RemoteName = remoteName };
 
         var branch = await _processRunner.RunAsync(
@@ -199,12 +209,9 @@ public sealed partial class GitHubService : IGitHubService
         if (branch.Success)
             data.Branch = branch.StdOut.Trim();
 
-        var remote = await _processRunner.RunAsync(
-            "git", $"remote get-url {remoteName}", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        if (remote.Success)
+        if (!string.IsNullOrWhiteSpace(remoteUrl))
         {
-            data.RemoteUrl = remote.StdOut.Trim();
+            data.RemoteUrl = remoteUrl;
             var (owner, repo) = ParseRepositoryRemote(data.RemoteUrl);
             data.Owner = owner;
             data.Repo = repo;
@@ -441,6 +448,7 @@ public sealed partial class GitHubService : IGitHubService
 
         if (clone.Success)
         {
+            await AdoptClonedRemoteAsync(dest, target, cancellationToken).ConfigureAwait(false);
             return new ProcessResult
             {
                 ExitCode = 0,
@@ -636,107 +644,91 @@ public sealed partial class GitHubService : IGitHubService
         if (!target.IsValid || string.IsNullOrWhiteSpace(target.CanonicalUrl))
             return new ProcessResult { ExitCode = -1, StdErr = target.ErrorMessage };
 
+        if (!StaticPagesDeployment.TryValidateDeploymentTarget(target, out var targetError))
+            return new ProcessResult { ExitCode = -1, StdErr = targetError };
+
+        if (target.Platform == GitHostingPlatform.Bitbucket)
+            return await PublishBitbucketStaticWebsiteAsync(projectPath, target, commitMessage, progress, cancellationToken)
+                .ConfigureAwait(false);
+
         progress?.Report("初始化本機 Git repository…");
         var init = await InitRepositoryAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
         if (!init.Success) return init;
 
-        var remoteName = RemoteNameFor(target.Platform);
-        var remote = await _processRunner.RunAsync(
-            "git", $"remote get-url {remoteName}", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
+        var (remoteName, remoteError) = await EnsurePlatformRemoteAsync(projectPath, target, progress, cancellationToken)
             .ConfigureAwait(false);
-        if (remote.Success)
+        if (remoteError is not null)
+            return remoteError;
+
+        var remoteBranch = "main";
+        if (StaticPagesDeployment.ShouldPushSourceBranch(target))
         {
-            var existingTarget = ParseRepositoryTarget(remote.StdOut.Trim());
-            if (!existingTarget.IsValid
-                || existingTarget.Platform != target.Platform
-                || !string.Equals(existingTarget.Owner, target.Owner, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(existingTarget.Repository, target.Repository, StringComparison.OrdinalIgnoreCase))
+            progress?.Report("抓取遠端預設分支…");
+            var fetch = await _processRunner.RunAsync(
+                "git", $"fetch {remoteName} --prune", projectPath, progress, cancellationToken, timeoutMs: 120_000)
+                .ConfigureAwait(false);
+            if (!fetch.Success)
+                return GitHostingProcessErrors.WithRepositoryAccessHint(
+                    target.Platform,
+                    "抓取遠端預設分支",
+                    fetch);
+
+            var remoteHead = await _processRunner.RunAsync(
+                "git", $"ls-remote --symref {remoteName} HEAD", projectPath, timeoutMs: 30_000, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var branchMatch = RemoteHeadRegex().Match(remoteHead.StdOut);
+            remoteBranch = branchMatch.Success ? branchMatch.Groups["branch"].Value : "main";
+            if (!GitBranchRegex().IsMatch(remoteBranch))
+                return new ProcessResult { ExitCode = -1, StdErr = "遠端預設分支名稱格式不安全，已停止操作。" };
+            var remoteRefCheck = await _processRunner.RunAsync(
+                "git", $"rev-parse --verify \"refs/remotes/{remoteName}/{remoteBranch}\"", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var remoteHasCommit = remoteRefCheck.Success || RemoteHeadCommitRegex().IsMatch(remoteHead.StdOut);
+
+            var localHead = await _processRunner.RunAsync(
+                "git", "rev-parse --verify HEAD", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            if (remoteHasCommit && !localHead.Success)
             {
-                return new ProcessResult
+                progress?.Report($"以遠端 {remoteBranch} 為基準，保留本機未追蹤網站檔案…");
+                var checkout = await _processRunner.RunAsync(
+                    "git",
+                    $"checkout -B \"{remoteBranch}\" --track \"{remoteName}/{remoteBranch}\"",
+                    projectPath,
+                    progress,
+                    cancellationToken,
+                    timeoutMs: 30_000).ConfigureAwait(false);
+                if (!checkout.Success)
                 {
-                    ExitCode = -1,
-                    StdErr = $"本機 {remoteName} remote 已指向其他 repository：{remote.StdOut.Trim()}。為避免推錯位置，Jekyller 未修改 {remoteName}。"
-                };
+                    return new ProcessResult
+                    {
+                        ExitCode = checkout.ExitCode,
+                        StdErr = $"遠端檔案與本機未追蹤檔案衝突，已停止連結；沒有強制覆蓋。\n{checkout.CombinedOutput}"
+                    };
+                }
             }
-        }
-        else
-        {
-            progress?.Report($"連結 {remoteName} remote：{target.Owner}/{target.Repository}…");
-            var addRemote = await _processRunner.RunAsync(
-                "git",
-                $"remote add {remoteName} \"{target.CanonicalUrl}\"",
-                projectPath,
-                progress,
-                cancellationToken,
-                timeoutMs: 15_000).ConfigureAwait(false);
-            if (!addRemote.Success) return addRemote;
-        }
-
-        progress?.Report("抓取遠端預設分支…");
-        var fetch = await _processRunner.RunAsync(
-            "git", $"fetch {remoteName} --prune", projectPath, progress, cancellationToken, timeoutMs: 120_000)
-            .ConfigureAwait(false);
-        if (!fetch.Success)
-            return GitHostingProcessErrors.WithRepositoryAccessHint(
-                target.Platform,
-                "抓取遠端預設分支",
-                fetch);
-
-        var remoteHead = await _processRunner.RunAsync(
-            "git", $"ls-remote --symref {remoteName} HEAD", projectPath, timeoutMs: 30_000, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        var branchMatch = RemoteHeadRegex().Match(remoteHead.StdOut);
-        var remoteBranch = branchMatch.Success ? branchMatch.Groups["branch"].Value : "main";
-        if (!GitBranchRegex().IsMatch(remoteBranch))
-            return new ProcessResult { ExitCode = -1, StdErr = "遠端預設分支名稱格式不安全，已停止操作。" };
-        var remoteRefCheck = await _processRunner.RunAsync(
-            "git", $"rev-parse --verify \"refs/remotes/{remoteName}/{remoteBranch}\"", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        var remoteHasCommit = remoteRefCheck.Success || RemoteHeadCommitRegex().IsMatch(remoteHead.StdOut);
-
-        var localHead = await _processRunner.RunAsync(
-            "git", "rev-parse --verify HEAD", projectPath, timeoutMs: 10_000, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        if (remoteHasCommit && !localHead.Success)
-        {
-            progress?.Report($"以遠端 {remoteBranch} 為基準，保留本機未追蹤網站檔案…");
-            var checkout = await _processRunner.RunAsync(
-                "git",
-                $"checkout -B \"{remoteBranch}\" --track \"{remoteName}/{remoteBranch}\"",
-                projectPath,
-                progress,
-                cancellationToken,
-                timeoutMs: 30_000).ConfigureAwait(false);
-            if (!checkout.Success)
+            else if (remoteHasCommit && localHead.Success)
             {
-                return new ProcessResult
+                await CommitAllAsync(projectPath, "Pre-sync local site files", progress, cancellationToken).ConfigureAwait(false);
+                progress?.Report($"合併遠端 {remoteBranch}（允許初始 README 歷史）…");
+                var merge = await _processRunner.RunAsync(
+                    "git",
+                    $"merge \"{remoteName}/{remoteBranch}\" --allow-unrelated-histories --no-edit",
+                    projectPath,
+                    progress,
+                    cancellationToken,
+                    timeoutMs: 60_000).ConfigureAwait(false);
+                if (!merge.Success)
                 {
-                    ExitCode = checkout.ExitCode,
-                    StdErr = $"遠端檔案與本機未追蹤檔案衝突，已停止連結；沒有強制覆蓋。\n{checkout.CombinedOutput}"
-                };
-            }
-        }
-        else if (remoteHasCommit && localHead.Success)
-        {
-            await CommitAllAsync(projectPath, "Pre-sync local site files", progress, cancellationToken).ConfigureAwait(false);
-            progress?.Report($"合併遠端 {remoteBranch}（允許初始 README 歷史）…");
-            var merge = await _processRunner.RunAsync(
-                "git",
-                $"merge \"{remoteName}/{remoteBranch}\" --allow-unrelated-histories --no-edit",
-                projectPath,
-                progress,
-                cancellationToken,
-                timeoutMs: 60_000).ConfigureAwait(false);
-            if (!merge.Success)
-            {
-                await _processRunner.RunAsync(
-                    "git", "merge --abort", projectPath, timeoutMs: 15_000, cancellationToken: cancellationToken)
-                    .ConfigureAwait(false);
-                return new ProcessResult
-                {
-                    ExitCode = merge.ExitCode,
-                    StdErr = $"遠端內容與本機內容發生合併衝突，已中止合併且未推送。\n{merge.CombinedOutput}"
-                };
+                    await _processRunner.RunAsync(
+                        "git", "merge --abort", projectPath, timeoutMs: 15_000, cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                    return new ProcessResult
+                    {
+                        ExitCode = merge.ExitCode,
+                        StdErr = $"遠端內容與本機內容發生合併衝突，已中止合併且未推送。\n{merge.CombinedOutput}"
+                    };
+                }
             }
         }
 
@@ -755,6 +747,10 @@ public sealed partial class GitHubService : IGitHubService
         {
             progress?.Report("加入 GitLab Pages CI（Ruby / Jekyll 建置）…");
             await EnsureGitLabPagesCiAsync(projectPath, cancellationToken).ConfigureAwait(false);
+            await EnsureHostingNotesAsync(projectPath, GitHostingPlatform.GitLab, cancellationToken).ConfigureAwait(false);
+            var platformError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (platformError is not null) return platformError;
             var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
             if (markerError is not null) return markerError;
         }
@@ -814,7 +810,7 @@ public sealed partial class GitHubService : IGitHubService
 
         if (StaticPagesDeployment.ShouldPublishOutputBranch(target))
         {
-            var outputBranch = StaticPagesDeployment.OutputBranchFor(target.Platform)!;
+            var outputBranch = StaticPagesDeployment.OutputBranchFor(target)!;
             var deploy = await PublishStaticOutputBranchAsync(
                 staticOutputDirectory!,
                 target,
@@ -835,6 +831,15 @@ public sealed partial class GitHubService : IGitHubService
                 allowManualSetupIfPushCompleted: true).ConfigureAwait(false);
         }
 
+        if (target.Platform == GitHostingPlatform.GitLab)
+        {
+            return new ProcessResult
+            {
+                ExitCode = 0,
+                StdOut = PagesAccessStatus.GitLabDeployedMessage(target.PagesUrl)
+            };
+        }
+
         return new ProcessResult
         {
             ExitCode = 0,
@@ -850,9 +855,15 @@ public sealed partial class GitHubService : IGitHubService
         CancellationToken cancellationToken = default)
     {
         progress?.Report("提交變更…");
-        var remoteName = RemoteNameFor(platform);
-        var remoteUrl = await DetectRemoteAsync(projectPath, platform, cancellationToken).ConfigureAwait(false);
+        var (remoteName, remoteUrl) = await ResolveRemoteAsync(projectPath, platform, cancellationToken)
+            .ConfigureAwait(false);
         var remoteTarget = ParseRepositoryTarget(remoteUrl);
+        if (remoteTarget.IsValid && !StaticPagesDeployment.TryValidateDeploymentTarget(remoteTarget, out var targetError))
+            return new ProcessResult { ExitCode = -1, StdErr = targetError };
+
+        if (remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.Bitbucket)
+            return await PublishBitbucketStaticWebsiteAsync(projectPath, remoteTarget, commitMessage, progress, cancellationToken)
+                .ConfigureAwait(false);
         if (remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.GitHub)
         {
             var workflowMessage = await EnsureGitHubActionsWorkflowAsync(projectPath, cancellationToken).ConfigureAwait(false);
@@ -867,6 +878,10 @@ public sealed partial class GitHubService : IGitHubService
         {
             progress?.Report("更新 GitLab Pages CI（Ruby / Jekyll 建置）…");
             await EnsureGitLabPagesCiAsync(projectPath, cancellationToken).ConfigureAwait(false);
+            await EnsureHostingNotesAsync(projectPath, GitHostingPlatform.GitLab, cancellationToken).ConfigureAwait(false);
+            var linuxError = await EnsureGitHubActionsBundlePlatformsAsync(projectPath, progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (linuxError is not null) return linuxError;
             var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
             if (markerError is not null) return markerError;
         }
@@ -931,7 +946,7 @@ public sealed partial class GitHubService : IGitHubService
 
         if (remoteTarget.IsValid && StaticPagesDeployment.ShouldPublishOutputBranch(remoteTarget))
         {
-            var outputBranch = StaticPagesDeployment.OutputBranchFor(remoteTarget.Platform)!;
+            var outputBranch = StaticPagesDeployment.OutputBranchFor(remoteTarget)!;
             return await PublishStaticOutputBranchAsync(
                 staticOutputDirectory!,
                 remoteTarget,
@@ -939,6 +954,17 @@ public sealed partial class GitHubService : IGitHubService
                 commitMessage,
                 progress,
                 cancellationToken).ConfigureAwait(false);
+        }
+
+        if (remoteTarget.IsValid && remoteTarget.Platform == GitHostingPlatform.GitLab && sourcePush.Success)
+        {
+            return new ProcessResult
+            {
+                ExitCode = 0,
+                StdOut = string.IsNullOrWhiteSpace(sourcePush.CombinedOutput)
+                    ? PagesAccessStatus.GitLabDeployedMessage(remoteTarget.PagesUrl)
+                    : sourcePush.CombinedOutput + Environment.NewLine + PagesAccessStatus.GitLabDeployedMessage(remoteTarget.PagesUrl)
+            };
         }
 
         return sourcePush;
@@ -950,7 +976,18 @@ public sealed partial class GitHubService : IGitHubService
         IProgress<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        var remoteName = RemoteNameFor(platform);
+        var (remoteName, remoteUrl) = await ResolveRemoteAsync(projectPath, platform, cancellationToken)
+            .ConfigureAwait(false);
+        var remoteTarget = ParseRepositoryTarget(remoteUrl);
+        if (remoteTarget.IsValid && StaticPagesDeployment.ShouldPublishOutputBranch(remoteTarget))
+        {
+            return new ProcessResult
+            {
+                ExitCode = 0,
+                StdOut = $"{remoteTarget.PlatformLabel} 只發布靜態輸出，不會從遠端覆蓋本機 Jekyll 來源。"
+            };
+        }
+
         var branch = await GetCurrentOrRemoteDefaultBranchAsync(projectPath, remoteName, cancellationToken).ConfigureAwait(false);
         if (branch is null)
         {
@@ -967,8 +1004,6 @@ public sealed partial class GitHubService : IGitHubService
             .ConfigureAwait(false);
         if (!fetch.Success)
         {
-            var remoteUrl = await DetectRemoteAsync(projectPath, platform, cancellationToken).ConfigureAwait(false);
-            var remoteTarget = ParseRepositoryTarget(remoteUrl);
             return remoteTarget.IsValid
                 ? GitHostingProcessErrors.WithRepositoryAccessHint(
                     remoteTarget.Platform,
@@ -1237,14 +1272,8 @@ public sealed partial class GitHubService : IGitHubService
         GitHostingPlatform platform = GitHostingPlatform.GitHub,
         CancellationToken cancellationToken = default)
     {
-        var remoteName = RemoteNameFor(platform);
-        var result = await _processRunner.RunAsync(
-            "git",
-            $"remote get-url {remoteName}",
-            projectPath,
-            timeoutMs: 10_000,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        return result.Success ? result.StdOut.Trim() : null;
+        var (_, remoteUrl) = await ResolveRemoteAsync(projectPath, platform, cancellationToken).ConfigureAwait(false);
+        return remoteUrl;
     }
 
     public async Task<(string Owner, string Repo)?> ParseOwnerRepoAsync(
@@ -1328,6 +1357,43 @@ public sealed partial class GitHubService : IGitHubService
         }
     }
 
+    private async Task<ProcessResult> PublishBitbucketStaticWebsiteAsync(
+        string projectPath,
+        GitHubRepositoryTarget target,
+        string commitMessage,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (!target.IsUserOrOrganizationSite)
+        {
+            return new ProcessResult
+            {
+                ExitCode = -1,
+                StdErr =
+                    "Bitbucket Cloud 靜態網站 repository 必須命名為 <workspace>.bitbucket.io。請改用正確的 Bitbucket Pages repository。"
+            };
+        }
+
+        progress?.Report("準備 Bitbucket 靜態網站輸出…");
+        await EnsureHostingNotesAsync(projectPath, GitHostingPlatform.Bitbucket, cancellationToken).ConfigureAwait(false);
+        var markerError = await PrepareDeploymentMarkerAsync(projectPath, progress, cancellationToken).ConfigureAwait(false);
+        if (markerError is not null) return markerError;
+
+        if (!StaticPagesDeployment.TryFindOutputDirectory(projectPath, out var outputDirectory, out var outputError))
+            return new ProcessResult { ExitCode = -1, StdErr = outputError };
+
+        CopyDeploymentMarkerToOutput(projectPath, outputDirectory);
+        var branch = StaticPagesDeployment.OutputBranchFor(target) ?? StaticPagesDeployment.BitbucketWebsiteBranch;
+        return await PublishStaticOutputBranchAsync(
+                outputDirectory,
+                target,
+                branch,
+                string.IsNullOrWhiteSpace(commitMessage) ? "Publish Bitbucket static website via Jekyller" : commitMessage,
+                progress,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private async Task<ProcessResult> PublishStaticOutputBranchAsync(
         string outputDirectory,
         GitHubRepositoryTarget target,
@@ -1337,17 +1403,17 @@ public sealed partial class GitHubService : IGitHubService
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(target.CanonicalUrl))
-            return new ProcessResult { ExitCode = -1, StdErr = "找不到可推送的 Codeberg repository 網址。" };
+            return new ProcessResult { ExitCode = -1, StdErr = $"找不到可推送的 {target.PlatformLabel} repository 網址。" };
 
         var tempRoot = Path.Combine(Path.GetTempPath(), "JekyllerStaticPages", Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(tempRoot);
-            progress?.Report($"準備 {target.PlatformLabel} Pages 輸出 branch：{branch}…");
+            var publishBranch = branch;
 
             var init = await _processRunner.RunAsync(
                 "git",
-                "init",
+                $"init -b \"{publishBranch}\"",
                 tempRoot,
                 progress,
                 cancellationToken,
@@ -1363,9 +1429,24 @@ public sealed partial class GitHubService : IGitHubService
                 timeoutMs: 30_000).ConfigureAwait(false);
             if (!remote.Success) return remote;
 
+            if (target.Platform == GitHostingPlatform.Bitbucket)
+            {
+                var head = await _processRunner.RunAsync(
+                    "git",
+                    "ls-remote --symref origin HEAD",
+                    tempRoot,
+                    timeoutMs: 30_000,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                var match = RemoteHeadRegex().Match(head.StdOut);
+                if (match.Success && GitBranchRegex().IsMatch(match.Groups["branch"].Value))
+                    publishBranch = match.Groups["branch"].Value;
+            }
+
+            progress?.Report($"準備 {target.PlatformLabel} Pages 輸出 branch：{publishBranch}…");
+
             var fetch = await _processRunner.RunAsync(
                 "git",
-                $"fetch origin \"{branch}\"",
+                $"fetch origin \"{publishBranch}\"",
                 tempRoot,
                 progress,
                 cancellationToken,
@@ -1375,7 +1456,7 @@ public sealed partial class GitHubService : IGitHubService
             {
                 var checkout = await _processRunner.RunAsync(
                     "git",
-                    $"checkout -B \"{branch}\" \"origin/{branch}\"",
+                    $"checkout -B \"{publishBranch}\" \"origin/{publishBranch}\"",
                     tempRoot,
                     progress,
                     cancellationToken,
@@ -1387,7 +1468,7 @@ public sealed partial class GitHubService : IGitHubService
             {
                 var checkout = await _processRunner.RunAsync(
                     "git",
-                    $"checkout --orphan \"{branch}\"",
+                    $"checkout --orphan \"{publishBranch}\"",
                     tempRoot,
                     progress,
                     cancellationToken,
@@ -1407,7 +1488,7 @@ public sealed partial class GitHubService : IGitHubService
             progress?.Report($"確認 {target.PlatformLabel} Pages branch 推送權限…");
             var dryRun = await _processRunner.RunAsync(
                 "git",
-                GitHostingAccessChecks.PushDryRunArguments(branch),
+                GitHostingAccessChecks.PushDryRunArguments(publishBranch),
                 tempRoot,
                 progress,
                 cancellationToken,
@@ -1418,10 +1499,10 @@ public sealed partial class GitHubService : IGitHubService
                     "推送 Pages branch",
                     dryRun);
 
-            progress?.Report($"推送 {target.PlatformLabel} Pages 輸出到 {branch} branch…");
+            progress?.Report($"推送 {target.PlatformLabel} Pages 輸出到 {publishBranch} branch…");
             var push = await _processRunner.RunAsync(
                 "git",
-                $"push -u origin HEAD:\"{branch}\"",
+                $"push -u origin HEAD:\"{publishBranch}\"",
                 tempRoot,
                 progress,
                 cancellationToken,
@@ -1435,10 +1516,7 @@ public sealed partial class GitHubService : IGitHubService
             return new ProcessResult
             {
                 ExitCode = 0,
-                StdOut = target.Platform == GitHostingPlatform.Codeberg
-                    ? "已將 Jekyll 靜態輸出推送到 Codeberg Pages 的 pages 分支。\n" +
-                      "若尚未設定 Webhook，請在 Codeberg repository Settings > Webhooks 新增 Forgejo webhook，Target URL 使用 Pages 網址，Branch filter 設為 pages。"
-                    : $"已推送 {target.PlatformLabel} 靜態輸出到 {branch} branch。"
+                StdOut = StaticPublishSuccessMessage(target, publishBranch)
             };
         }
         finally
@@ -1446,6 +1524,19 @@ public sealed partial class GitHubService : IGitHubService
             TryDeleteDirectory(tempRoot);
         }
     }
+
+    private static string StaticPublishSuccessMessage(GitHubRepositoryTarget target, string branch) =>
+        target.Platform switch
+        {
+            GitHostingPlatform.Codeberg =>
+                "已將 Jekyll 靜態輸出推送到 Codeberg Pages 的 pages 分支。\n" +
+                "若尚未設定 Webhook，請在 Codeberg repository Settings > Webhooks 新增 Forgejo webhook，Target URL 使用 Pages 網址，Branch filter 設為 pages。",
+            GitHostingPlatform.Bitbucket =>
+                $"已推送 Bitbucket 靜態網站：{target.Owner}/{target.Repository}\n" +
+                $"網站網址：{target.PagesUrl}\n" +
+                "Bitbucket Cloud 會直接從 repository 根目錄提供 index.html；更新可能因快取最多延遲約 15 分鐘。",
+            _ => $"已推送 {target.PlatformLabel} 靜態輸出到 {branch} branch。"
+        };
 
     private static void CopyDeploymentMarkerToOutput(string projectPath, string outputDirectory)
     {
@@ -1516,11 +1607,18 @@ public sealed partial class GitHubService : IGitHubService
         string projectPath,
         CancellationToken cancellationToken)
     {
-        await File.WriteAllTextAsync(
-                GitLabPagesCi.PathFor(projectPath),
-                GitLabPagesCi.Configuration,
-                cancellationToken)
-            .ConfigureAwait(false);
+        var path = GitLabPagesCi.PathFor(projectPath);
+        if (File.Exists(path))
+        {
+            var existing = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+            if (existing.Contains("bundle exec jekyll", StringComparison.OrdinalIgnoreCase)
+                && existing.Contains("pages:", StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        await File.WriteAllTextAsync(path, GitLabPagesCi.Configuration, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task EnsureHostingNotesAsync(
@@ -1528,17 +1626,17 @@ public sealed partial class GitHubService : IGitHubService
         GitHostingPlatform platform,
         CancellationToken cancellationToken)
     {
-        if (platform is not (GitHostingPlatform.Codeberg or GitHostingPlatform.Bitbucket))
+        if (platform is not (GitHostingPlatform.GitLab or GitHostingPlatform.Codeberg or GitHostingPlatform.Bitbucket))
             return;
 
         var docsDir = Path.Combine(projectPath, "docs");
         Directory.CreateDirectory(docsDir);
-        var fileName = platform == GitHostingPlatform.Codeberg
-            ? "codeberg-pages.md"
-            : "bitbucket-pages.md";
-        var content = platform == GitHostingPlatform.Codeberg
-            ? CodebergPagesNotes
-            : BitbucketPagesNotes;
+        var (fileName, content) = platform switch
+        {
+            GitHostingPlatform.GitLab => ("gitlab-pages.md", GitLabPagesNotes),
+            GitHostingPlatform.Codeberg => ("codeberg-pages.md", CodebergPagesNotes),
+            _ => ("bitbucket-pages.md", BitbucketPagesNotes)
+        };
         await File.WriteAllTextAsync(
                 Path.Combine(docsDir, fileName),
                 content,
@@ -1631,7 +1729,7 @@ public sealed partial class GitHubService : IGitHubService
         return new ProcessResult
         {
             ExitCode = result.ExitCode,
-            StdErr = "無法更新 Gemfile.lock 以支援 GitHub Actions Linux 平台；已停止提交與推送。\n" +
+            StdErr = "無法更新 Gemfile.lock 以支援 Linux CI 平台；已停止提交與推送。\n" +
                      result.CombinedOutput
         };
     }
@@ -1695,13 +1793,18 @@ public sealed partial class GitHubService : IGitHubService
         string owner,
         string repository)
     {
-        var account = owner.Split('/')[0].ToLowerInvariant();
+        var ownerSegments = owner.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var account = ownerSegments[0].ToLowerInvariant();
+        var ownerPath = ownerSegments.Length <= 1
+            ? string.Empty
+            : string.Join('/', ownerSegments.Skip(1).Select(segment => segment.ToLowerInvariant()));
+
         return platform switch
         {
             GitHostingPlatform.GitHub => BuildSiteUrls(account, repository, ".github.io"),
-            GitHostingPlatform.GitLab => BuildSiteUrls(account, repository, ".gitlab.io"),
+            GitHostingPlatform.GitLab => BuildGitLabSiteUrls(account, ownerPath, repository),
             GitHostingPlatform.Codeberg => BuildSiteUrls(account, repository, ".codeberg.page", "pages"),
-            GitHostingPlatform.Bitbucket => BuildSiteUrls(account, repository, ".bitbucket.io"),
+            GitHostingPlatform.Bitbucket => BuildBitbucketSiteUrls(account, repository),
             _ => (string.Empty, string.Empty, string.Empty, false)
         };
     }
@@ -1717,6 +1820,127 @@ public sealed partial class GitHubService : IGitHubService
         var host = $"https://{account}{hostSuffix}";
         return (userSite ? $"{host}/" : $"{host}/{repository}/", host, userSite ? string.Empty : $"/{repository}", userSite);
     }
+
+    private static (string PagesUrl, string JekyllUrl, string BaseUrl, bool IsUserSite) BuildGitLabSiteUrls(
+        string account,
+        string ownerPath,
+        string repository)
+    {
+        var userSite = repository.Equals($"{account}.gitlab.io", StringComparison.OrdinalIgnoreCase);
+        var host = $"https://{account}.gitlab.io";
+        if (userSite)
+            return ($"{host}/", host, string.Empty, true);
+
+        var projectPath = string.IsNullOrWhiteSpace(ownerPath) ? repository : $"{ownerPath}/{repository}";
+        return ($"{host}/{projectPath}/", host, $"/{projectPath}", false);
+    }
+
+    private static (string PagesUrl, string JekyllUrl, string BaseUrl, bool IsUserSite) BuildBitbucketSiteUrls(
+        string account,
+        string repository)
+    {
+        var userSite = repository.Equals($"{account}.bitbucket.io", StringComparison.OrdinalIgnoreCase);
+        var host = $"https://{account}.bitbucket.io";
+        return userSite
+            ? ($"{host}/", host, string.Empty, true)
+            : (string.Empty, host, string.Empty, false);
+    }
+
+    private async Task<(string Name, string? Url)> ResolveRemoteAsync(
+        string projectPath,
+        GitHostingPlatform platform,
+        CancellationToken cancellationToken)
+    {
+        var preferred = RemoteNameFor(platform);
+        var preferredUrl = await GetRemoteUrlAsync(projectPath, preferred, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(preferredUrl))
+            return (preferred, preferredUrl);
+
+        if (!string.Equals(preferred, "origin", StringComparison.Ordinal))
+        {
+            var originUrl = await GetRemoteUrlAsync(projectPath, "origin", cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(originUrl))
+            {
+                var parsed = ParseRepositoryTarget(originUrl);
+                if (parsed.IsValid && parsed.Platform == platform)
+                    return ("origin", originUrl);
+            }
+        }
+
+        return (preferred, null);
+    }
+
+    private async Task<string?> GetRemoteUrlAsync(
+        string projectPath,
+        string remoteName,
+        CancellationToken cancellationToken)
+    {
+        var result = await _processRunner.RunAsync(
+            "git",
+            $"remote get-url {remoteName}",
+            projectPath,
+            timeoutMs: 10_000,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return result.Success ? result.StdOut.Trim() : null;
+    }
+
+    private async Task AdoptClonedRemoteAsync(
+        string destinationPath,
+        GitHubRepositoryTarget target,
+        CancellationToken cancellationToken)
+    {
+        var preferred = RemoteNameFor(target.Platform);
+        if (string.Equals(preferred, "origin", StringComparison.Ordinal))
+            return;
+
+        await _processRunner.RunAsync(
+            "git",
+            $"remote rename origin {preferred}",
+            destinationPath,
+            timeoutMs: 15_000,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(string Name, ProcessResult? Error)> EnsurePlatformRemoteAsync(
+        string projectPath,
+        GitHubRepositoryTarget target,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var preferred = RemoteNameFor(target.Platform);
+        var preferredUrl = await GetRemoteUrlAsync(projectPath, preferred, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(preferredUrl))
+        {
+            return GitPlatformSelection.IsSameRepository(ParseRepositoryTarget(preferredUrl), target)
+                ? (preferred, null)
+                : (preferred, new ProcessResult
+                {
+                    ExitCode = -1,
+                    StdErr = $"本機 {preferred} remote 已指向其他 repository：{preferredUrl}。為避免推錯位置，Jekyller 未修改 {preferred}。"
+                });
+        }
+
+        var originUrl = await GetRemoteUrlAsync(projectPath, "origin", cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(originUrl)
+            && GitPlatformSelection.IsSameRepository(ParseRepositoryTarget(originUrl), target))
+        {
+            return ("origin", null);
+        }
+
+        progress?.Report($"連結 {preferred} remote：{target.Owner}/{target.Repository}…");
+        var addRemote = await _processRunner.RunAsync(
+            "git",
+            $"remote add {preferred} \"{target.CanonicalUrl}\"",
+            projectPath,
+            progress,
+            cancellationToken,
+            timeoutMs: 15_000).ConfigureAwait(false);
+        return addRemote.Success ? (preferred, null) : (preferred, addRemote);
+    }
+
+    private static bool ContainsGitLabRepositorySubPath(IReadOnlyList<string> segments) =>
+        segments.Any(segment =>
+            segment is "-" or "issues" or "merge_requests" or "settings" or "pipelines" or "actions");
 
     internal static List<string> ParseRepositoryContentNames(string json)
     {
@@ -1791,9 +2015,26 @@ public sealed partial class GitHubService : IGitHubService
     };
 
     private const string UnsupportedRepositoryUrlMessage =
-        "支援 GitHub、GitLab、Codeberg、Bitbucket repository 網址，以及 GitHub Pages 網址。";
+        "支援 GitHub、GitLab、Codeberg、Bitbucket repository 網址，以及 github.io / gitlab.io / codeberg.page / bitbucket.io Pages 網址。";
 
     private static readonly string[] SupportedHosts = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
+
+    private const string GitLabPagesNotes = """
+# GitLab Pages deployment notes
+
+Jekyller pushes this Jekyll source repository to GitLab and writes `.gitlab-ci.yml` so GitLab Pages CI can build with Ruby / Bundler.
+
+After the pipeline succeeds:
+
+1. Open the GitLab project Settings > Pages.
+2. GitLab Pages caches static files. Updates usually appear in less than a minute.
+3. Pages access:
+   - Everyone: public website, no login.
+   - Everyone With Access: only people who can access the GitLab project, after they sign in.
+4. To let visitors open the site without logging in, change Pages from Everyone With Access to Everyone.
+
+Jekyller cannot change this GitLab setting from the desktop app.
+""";
 
     private const string CodebergPagesNotes = """
 # Codeberg Pages deployment notes
@@ -1812,13 +2053,13 @@ Jekyller keeps Jekyll source in the normal local Git branch and publishes build 
     private const string BitbucketPagesNotes = """
 # Bitbucket static website deployment notes
 
-Jekyller can clone and push this repository to Bitbucket. Bitbucket Cloud static websites are workspace-level sites:
+Jekyller can clone this repository and publish a Bitbucket Cloud static website. Bitbucket only hosts workspace-level sites:
 
 1. The repository that serves the website must be named `<workspace>.bitbucket.io`.
 2. The live URL is `https://<workspace>.bitbucket.io/`.
-3. Jekyller builds the Jekyll site and publishes generated static output.
+3. Jekyller builds the Jekyll site locally and pushes the generated `_site/` files to the repository default branch.
 
-Bitbucket does not provide GitHub-style per-project Pages URLs.
+Bitbucket does not provide GitHub-style per-project Pages URLs. Keep Jekyll source on this computer; the Bitbucket repository receives static output only.
 """;
 
     private const string GitHubPagesWorkflow = """

@@ -38,6 +38,12 @@ public static class GitHubPagesUrl
             return null;
 
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (mapping.RepositoryHost.Equals("gitlab.com", StringComparison.OrdinalIgnoreCase) && segments.Length > 1)
+        {
+            var gitlabOwner = $"{owner}/{string.Join('/', segments[..^1])}";
+            return $"https://gitlab.com/{gitlabOwner}/{segments[^1]}";
+        }
+
         var repository = segments.Length == 0 ? mapping.UserSiteRepository(owner) : segments[0];
         return $"https://{mapping.RepositoryHost}/{owner}/{repository}";
     }

@@ -2,8 +2,8 @@ namespace Jekyller.Services;
 
 public static class DeploymentMarkerFiles
 {
-    public const string PrimaryFileName = "hugoer-deployment.json";
-    public const string LegacyFileName = "jekyller-deployment.json";
+    public const string PrimaryFileName = "jekyller-deployment.json";
+    public const string LegacyFileName = "hugoer-deployment.json";
 
     public static IReadOnlyList<string> ReadCandidates { get; } =
         [PrimaryFileName, LegacyFileName];

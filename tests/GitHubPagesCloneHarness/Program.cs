@@ -10,9 +10,21 @@ Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("alice.github.io/notes") == "htt
 Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://group5923835.gitlab.io/fengtusama.gitlab.io/")
        == "https://gitlab.com/group5923835/fengtusama.gitlab.io",
     "GitLab Pages URL must map to its GitLab repository.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://group.gitlab.io/subgroup/project/")
+       == "https://gitlab.com/group/subgroup/project",
+    "Nested GitLab Pages URL must keep the subgroup in the repository path.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("fengtusama.codeberg.page")
+       == "https://codeberg.org/fengtusama/pages",
+    "Scheme-less Codeberg Pages URL must map to the pages repository.");
 Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://fengtusama.codeberg.page/")
        == "https://codeberg.org/fengtusama/pages",
     "Codeberg user Pages URL must map to the pages repository.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://fengtusama.codeberg.page/notes/")
+       == "https://codeberg.org/fengtusama/notes",
+    "Codeberg project Pages URL must map to the project repository.");
+Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("fengtusama.bitbucket.io")
+       == "https://bitbucket.org/fengtusama/fengtusama.bitbucket.io",
+    "Scheme-less Bitbucket Pages URL must map to the workspace.bitbucket.io repository.");
 Assert(GitHubPagesUrl.TryConvertToRepositoryUrl("https://fengtusama.bitbucket.io/")
        == "https://bitbucket.org/fengtusama/fengtusama.bitbucket.io",
     "Bitbucket static website URL must map to the workspace.bitbucket.io repository.");

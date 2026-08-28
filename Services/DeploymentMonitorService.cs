@@ -126,11 +126,15 @@ public sealed class DeploymentMonitorService
                         CheckedAt = checkedAt
                     }
                     : Previous(expected, live.DeploymentId, checkedAt,
-                        "線上網站仍是上一版本；Pages 尚在部署最新內容。");
+                        PagesAccessStatus.WithGitLabCacheHint(
+                            pagesUrl,
+                            "線上網站仍是上一版本；Pages 尚在部署最新內容。"));
             }
 
             return Previous(expected, null, checkedAt,
-                "線上網站仍是上一版本；尚未找到最新部署標記。");
+                PagesAccessStatus.WithGitLabCacheHint(
+                    pagesUrl,
+                    "線上網站仍是上一版本；尚未找到最新部署標記。"));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
